@@ -1,0 +1,32 @@
+# Installed packages
+node_modules/
+
+# Operating-system clutter
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Local databases and SQLite sidecars
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+
+# Generated files and reports
+graphify-out/
+coverage/
+dist/
+build/
+*.log
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+
+# Build and archive artifacts
+artifacts/
+*.tgz
+*.zip
+*.tar
+*.tar.gz

@@ -1,0 +1,26 @@
+{
+  "name": "opencode-telemetry-dashboard",
+  "version": "1.0.0",
+  "description": "A zero-dependency local dashboard for aggregate OpenCode telemetry.",
+  "type": "module",
+  "private": true,
+  "author": "sandvich1337",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sandvich1337/opencode-telemetry-dashboard.git"
+  },
+  "bugs": {
+    "url": "https://github.com/sandvich1337/opencode-telemetry-dashboard/issues"
+  },
+  "homepage": "https://github.com/sandvich1337/opencode-telemetry-dashboard#readme",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node server.mjs --open",
+    "metrics": "node metrics.mjs",
+    "metrics:dashboard": "node server.mjs --open",
+    "test": "node --test"
+  }
+}

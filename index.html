@@ -1,0 +1,651 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>OpenCode telemetry</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #10141c;
+        --panel: #171d28;
+        --line: #2a3444;
+        --text: #edf2f7;
+        --muted: #9aa8ba;
+        --accent: #7dd3fc;
+        --good: #86efac;
+        --bad: #fca5a5;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font: 15px/1.45 system-ui, -apple-system, Segoe UI, sans-serif;
+      }
+      main { max-width: 1240px; margin: 0 auto; padding: 28px 20px 48px; }
+      header { display: flex; gap: 18px; align-items: start; justify-content: space-between; flex-wrap: wrap; }
+      h1, h2 { margin: 0; letter-spacing: -.02em; }
+      h1 { font-size: clamp(1.6rem, 3vw, 2.2rem); }
+      h2 { font-size: 1rem; margin-bottom: 12px; }
+      p { margin: 5px 0 0; color: var(--muted); }
+      .controls { display: flex; gap: 7px; flex-wrap: wrap; }
+      .filters { display: flex; gap: 9px; align-items: center; flex-wrap: wrap; margin-top: 14px; }
+      .filters label { color: var(--muted); font-size: .86rem; }
+      .title-toggle { display: inline-flex; align-items: center; gap: 6px; }
+      .title-toggle input { accent-color: var(--accent); }
+      select {
+        min-width: min(100%, 360px); border: 1px solid var(--line); border-radius: 7px;
+        background: var(--panel); color: var(--text); padding: 7px 30px 7px 9px;
+      }
+      button {
+        border: 1px solid var(--line); border-radius: 7px; background: var(--panel);
+        color: var(--text); cursor: pointer; padding: 7px 11px;
+      }
+      button:hover, button.active { border-color: var(--accent); color: var(--accent); }
+      button:disabled { cursor: wait; opacity: .65; }
+      .refresh-countdown { color: var(--muted); font-size: .86rem; }
+      .status { color: var(--muted); margin: 18px 0 12px; min-height: 1.45em; }
+      .status.error { color: var(--bad); }
+      .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 10px; }
+      .card, section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+      .card { padding: 14px; }
+      .card .label { color: var(--muted); font-size: .82rem; }
+      .card .value { font-size: 1.35rem; font-weight: 650; margin-top: 3px; }
+      .layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, .52fr); gap: 14px; margin-top: 14px; }
+      section { padding: 15px; min-width: 0; }
+      section.wide { grid-column: 1 / -1; }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { border-bottom: 1px solid var(--line); padding: 9px 7px; text-align: left; white-space: nowrap; }
+      th { color: var(--muted); font-size: .78rem; font-weight: 550; }
+      td.num, th.num { text-align: right; }
+      tr:last-child td { border-bottom: 0; }
+      .muted { color: var(--muted); }
+      .good { color: var(--good); }
+      .bad { color: var(--bad); }
+      .empty { color: var(--muted); padding: 8px 0; }
+      .topology { margin-bottom: 15px; }
+      .topology h3, .agent-tools h3 { margin: 0 0 8px; font-size: .9rem; }
+      .topology-tree { list-style: none; margin: 0; padding: 0 6px 0 0; max-height: 34rem; overflow: auto; }
+      .topology-tree ul { list-style: none; margin: 0; padding: 0; }
+      .topology-tree ul { margin-left: 12px; padding-left: 16px; border-left: 1px solid var(--line); }
+      .topology-tree li { padding: 2px 0; }
+      .scope-node { display: block; width: 100%; text-align: left; background: transparent; }
+      .scope-node:hover, .scope-node:focus-visible, .scope-node[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+      .agent-tools { border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; }
+      .agent-tools + .agent-tools { margin-top: 8px; }
+      .agent-tools summary { display: flex; justify-content: space-between; gap: 8px 12px; align-items: baseline; flex-wrap: wrap; cursor: pointer; }
+      .agent-tools summary::before { content: "▸"; color: var(--accent); }
+      .agent-tools[open] summary::before { content: "▾"; }
+      .agent-tools summary strong { margin-right: auto; }
+      .agent-tools[open] summary { margin-bottom: 10px; }
+      .agent-tool-body { display: grid; gap: 8px; }
+      .tool-summary { display: grid; gap: 8px; margin-bottom: 12px; }
+      .pricing-note { display: grid; gap: 9px; margin-bottom: 12px; }
+      .conservation { border-left: 3px solid var(--line); padding-left: 9px; }
+      .conservation.good { border-color: var(--good); }
+      .conservation.bad { border-color: var(--bad); }
+      .schema { display: flex; gap: 9px; flex-wrap: wrap; }
+      .schema span { border: 1px solid var(--line); border-radius: 999px; padding: 3px 8px; color: var(--muted); }
+      .schema span.ok { color: var(--good); border-color: #285e3b; }
+      @media (max-width: 850px) { .layout { grid-template-columns: 1fr; } section.wide { grid-column: auto; } }
+      @media (max-width: 620px) { main { padding: 20px 12px 36px; } th, td { padding: 8px 4px; } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <h1>OpenCode telemetry</h1>
+          <p>Local, aggregate-only metrics from the read-only session store.</p>
+        </div>
+        <nav class="controls" aria-label="Time range">
+          <button data-range="24h">24h</button>
+          <button data-range="7d">7d</button>
+          <button data-range="30d" class="active">30d</button>
+          <button data-range="all">All</button>
+        </nav>
+      </header>
+      <div class="filters" aria-label="Metric filters">
+        <label for="session">Root session</label>
+        <select id="session">
+          <option value="">All sessions</option>
+        </select>
+        <label class="title-toggle" for="showSessionTitles">
+          <input id="showSessionTitles" type="checkbox">
+          Show root titles
+        </label>
+        <button id="refresh" type="button">Refresh</button>
+        <span id="refreshCountdown" class="refresh-countdown" role="status" aria-live="polite">Refresh in 60s</span>
+      </div>
+      <div id="status" class="status" role="status">Loading…</div>
+      <div id="cards" class="cards"></div>
+      <div class="layout">
+        <section class="wide">
+          <h2>Agent / model</h2>
+          <div id="topology" class="topology"></div>
+          <div id="groups"></div>
+        </section>
+        <section class="wide">
+          <h2>Tool usage</h2>
+          <div id="toolUsage"></div>
+        </section>
+        <section>
+          <h2>Reviewer slots</h2>
+          <div id="reviewers"></div>
+        </section>
+        <section>
+          <h2>Schema capabilities</h2>
+          <div id="schema"></div>
+        </section>
+        <section class="wide">
+          <h2>Pricing and attribution</h2>
+          <div id="pricing"></div>
+        </section>
+      </div>
+    </main>
+    <script>
+      const number = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
+      const money = new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+      const REFRESH_MS = 60 * 1000;
+      const byId = (id) => document.getElementById(id);
+      const escapeHtml = (value) => String(value ?? "—").replace(/[&<>"']/g, (character) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      }[character]));
+      const hasValue = (value) => value !== null && value !== undefined && value !== "";
+      const numeric = (value) => {
+        const result = Number(value);
+        return hasValue(value) && Number.isFinite(result) ? result : null;
+      };
+      const display = (value) => hasValue(value) && typeof value !== "object" ? String(value) : "—";
+      const firstDefined = (...values) => values.find((value) => hasValue(value));
+      const scalarValue = (...values) => values.find((value) =>
+        (typeof value === "string" || typeof value === "number") && String(value).trim() !== "");
+      const objectOrEmpty = (value) => value && typeof value === "object" && !Array.isArray(value) ? value : {};
+      const fmt = (value) => {
+        const result = numeric(value);
+        return result === null ? "—" : number.format(result);
+      };
+      const percent = (value) => {
+        const result = numeric(value);
+        return result === null ? "—" : `${fmt(result * 100)}%`;
+      };
+      const moneyValue = (value) => {
+        const result = numeric(value);
+        return result === null ? "—" : `$${money.format(result)}`;
+      };
+      const duration = (value) => {
+        const result = numeric(value);
+        if (result === null) return "—";
+        const seconds = result / 1000;
+        if (seconds < 60) return `${fmt(seconds)}s`;
+        return `${fmt(seconds / 60)}m`;
+      };
+      const cell = (value, className = "") => `<td class="${escapeHtml(className)}">${escapeHtml(display(value))}</td>`;
+      const header = (value, className = "") => `<th class="${escapeHtml(className)}">${escapeHtml(display(value))}</th>`;
+      const fieldText = (value) => {
+        if (!value || typeof value !== "object") return display(value);
+        return display(firstDefined(value.name, value.label, value.url));
+      };
+      const tokenValues = (source = {}) => {
+        const record = objectOrEmpty(source);
+        const tokens = objectOrEmpty(record.tokens);
+        const pick = (...keys) => firstDefined(...keys.flatMap((key) => [record[key], tokens[key]]));
+        return {
+          input: pick("input", "inputTokens"),
+          output: pick("output", "outputTokens"),
+          reasoning: pick("reasoning", "reasoningTokens"),
+          cacheRead: pick("cacheRead", "cache_read", "cacheR"),
+          cacheWrite: pick("cacheWrite", "cache_write", "cacheW"),
+          total: pick("total", "totalTokens")
+        };
+      };
+      const estimatedUsdValue = (record, allowLegacy = false) => {
+        const value = objectOrEmpty(record).estimatedCost;
+        return firstDefined(
+          value && typeof value === "object" ? value.usd : value,
+          objectOrEmpty(record).estimatedUSD,
+          allowLegacy ? objectOrEmpty(record).cost : undefined
+        );
+      };
+      const formatDateTime = (value) => {
+        if (!hasValue(value)) return "—";
+        const date = new Date(value);
+        return Number.isNaN(date.getTime()) ? display(value) : date.toLocaleString();
+      };
+      const cacheWriteText = (record, tokens = tokenValues(record)) => {
+        const reporting = objectOrEmpty(objectOrEmpty(record).cacheWriteReporting);
+        if (numeric(reporting.observed) === 0 || !hasValue(tokens.cacheWrite)) return "Not reported";
+        return fmt(tokens.cacheWrite);
+      };
+
+      function renderCards(summary) {
+        const record = objectOrEmpty(summary);
+        const tokens = tokenValues(record);
+        const files = objectOrEmpty(record.files);
+        const cards = [
+          ["Runs", fmt(record.runs)], ["Subagents", fmt(record.subagents)],
+          ["Input tokens", fmt(tokens.input)], ["Output tokens", fmt(tokens.output)],
+          ["Reasoning", fmt(tokens.reasoning)],
+          ["Cache R / W", `${fmt(tokens.cacheRead)} / ${cacheWriteText(record, tokens)}`],
+          ["Total tokens", fmt(tokens.total)], ["Estimated API $", moneyValue(estimatedUsdValue(record))],
+          ["Tools", fmt(record.tools)], ["Reads", fmt(record.reads)],
+          ["Errors", fmt(record.errors)], ["Duration", duration(record.durationMs)],
+          ["Files + / -", `${fmt(files.additions)} / ${fmt(files.deletions)}`],
+        ];
+        byId("cards").innerHTML = cards.map(([label, value]) =>
+          `<div class="card"><div class="label">${escapeHtml(label)}</div><div class="value">${escapeHtml(value)}</div></div>`).join("");
+      }
+
+      function renderGroups(groups) {
+        const rowsForGroups = Array.isArray(groups) ? groups : [];
+        if (!rowsForGroups.length) { byId("groups").innerHTML = '<div class="empty">No aggregate rows for this range.</div>'; return; }
+        const rows = rowsForGroups.map((source) => {
+          const group = objectOrEmpty(source);
+          const tokens = tokenValues(group);
+          const files = objectOrEmpty(group.files);
+          return `<tr>
+            ${cell(group.agent)}${cell(group.model)}${cell(fmt(group.runs), "num")}${cell(fmt(group.subagents), "num")}
+            ${cell(fmt(tokens.input), "num")}${cell(fmt(tokens.output), "num")}${cell(fmt(tokens.reasoning), "num")}
+            ${cell(fmt(tokens.cacheRead), "num")}${cell(cacheWriteText(group, tokens), "num")}${cell(fmt(tokens.total), "num")}
+            ${cell(moneyValue(estimatedUsdValue(group)), "num")}${cell(fmt(group.tools), "num")}
+            ${cell(fmt(group.reads), "num")}
+            ${cell(fmt(group.errors), "num")}${cell(duration(group.durationMs), "num")}
+            ${cell(`${fmt(files.additions)} / ${fmt(files.deletions)}`, "num")}
+          </tr>`;
+        }).join("");
+        byId("groups").innerHTML = `<div style="overflow:auto"><table><thead><tr>
+          ${header("Agent")}${header("Model")}${header("Runs", "num")}${header("Subagents", "num")}
+           ${header("Input", "num")}${header("Output", "num")}${header("Reasoning", "num")}
+           ${header("Cache R", "num")}${header("Cache W", "num")}${header("Total", "num")}${header("Estimated API $", "num")}
+           ${header("Tools", "num")}${header("Reads", "num")}${header("Errors", "num")}
+           ${header("Duration", "num")}${header("Files + / -", "num")}
+         </tr></thead><tbody>${rows}</tbody></table></div>`;
+      }
+
+      const toolTokenKeys = ["input", "output", "reasoning", "cacheRead", "cacheWrite", "total"];
+      const toolTotalsFromRows = (rows) => rows.reduce((totals, entry) => {
+        const row = objectOrEmpty(entry);
+        for (const key of toolTokenKeys) totals[key] += numeric(row[key]) ?? numeric(tokenValues(row)[key]) ?? 0;
+        totals.calls += numeric(firstDefined(row.calls, row.count)) ?? 0;
+        totals.errors += numeric(row.errors) ?? 0;
+        return totals;
+      }, { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0, calls: 0, errors: 0 });
+      const toolTotals = (record, rows) => {
+        const source = objectOrEmpty(record);
+        const fallback = toolTotalsFromRows(rows);
+        const tokens = tokenValues(source);
+        return {
+          input: numeric(tokens.input) ?? fallback.input,
+          output: numeric(tokens.output) ?? fallback.output,
+          reasoning: numeric(tokens.reasoning) ?? fallback.reasoning,
+          cacheRead: numeric(tokens.cacheRead) ?? fallback.cacheRead,
+          cacheWrite: numeric(tokens.cacheWrite) ?? fallback.cacheWrite,
+          total: numeric(tokens.total) ?? fallback.total,
+          calls: numeric(firstDefined(source.calls, source.count)) ?? fallback.calls,
+          errors: numeric(source.errors) ?? fallback.errors,
+        };
+      };
+      const renderToolRows = (source) => source.map((entry) => {
+          const tool = objectOrEmpty(entry);
+          const tokens = tokenValues(tool);
+          return `<tr>
+            ${cell(firstDefined(tool.tool, tool.name, tool.toolName))}
+            ${cell(fmt(firstDefined(tool.calls, tool.count)), "num")}${cell(fmt(tool.errors), "num")}
+            ${cell(fmt(tokens.input), "num")}${cell(fmt(tokens.output), "num")}${cell(fmt(tokens.reasoning), "num")}
+            ${cell(fmt(tokens.cacheRead), "num")}${cell(cacheWriteText(tool, tokens), "num")}${cell(fmt(tokens.total), "num")}
+            ${cell(moneyValue(estimatedUsdValue(tool)), "num")}
+          </tr>`;
+        }).join("");
+      const renderToolTable = (source) => source.length ? `<div style="overflow:auto"><table><thead><tr>
+           ${header("Tool")}${header("Calls", "num")}${header("Errors", "num")}${header("Input", "num")}
+           ${header("Output", "num")}${header("Reasoning", "num")}${header("Cache R", "num")}${header("Cache W", "num")}
+           ${header("Total", "num")}${header("Estimated USD", "num")}
+        </tr></thead><tbody>${renderToolRows(source)}</tbody></table></div>` : '<div class="empty">No tool usage rows.</div>';
+
+      function renderToolUsage(toolUsage = {}) {
+        const usage = objectOrEmpty(toolUsage);
+        const source = Array.isArray(usage.rows) ? usage.rows : [];
+        const conservation = objectOrEmpty(usage.conservation);
+        const globalTotals = toolTotals(firstDefined(usage.totals, conservation.summary) || {}, source);
+        const globalExact = conservation.exact === true || conservation.ok === true;
+        const globalCacheWrite = cacheWriteText(usage, globalTotals);
+        const blocks = Array.isArray(usage.byAgent) && usage.byAgent.length
+          ? usage.byAgent
+          : source.length ? [{ agent: "All agents", rows: source }] : [];
+        if (!blocks.length) { byId("toolUsage").innerHTML = '<div class="empty">No tool usage data.</div>'; return; }
+        const globalDelta = objectOrEmpty(conservation.delta);
+        const deltaText = toolTokenKeys.map((key) => `${key}: ${fmt(globalDelta[key])}`).join(" · ");
+        const blockMarkup = blocks.map((sourceBlock) => {
+          const block = objectOrEmpty(sourceBlock);
+          const rows = Array.isArray(block.rows) ? block.rows : [];
+          const totals = toolTotals(block.totals, rows);
+          const blockConservation = objectOrEmpty(block.conservation);
+          const blockExact = blockConservation.exact === true || blockConservation.ok === true;
+          const model = scalarValue(block.model, block.modelName);
+          const title = [scalarValue(block.agent, block.name) || "Agent", model].filter(Boolean).join(" · ");
+          return `<details class="agent-tools"${blocks.length === 1 ? " open" : ""}>
+            <summary><strong>${escapeHtml(title)}</strong><span class="muted">${escapeHtml(fmt(totals.calls))} calls · ${escapeHtml(fmt(totals.errors))} errors · ${escapeHtml(fmt(totals.total))} tokens</span></summary>
+            <div class="agent-tool-body">
+              <div class="muted">Input ${escapeHtml(fmt(totals.input))} · output ${escapeHtml(fmt(totals.output))} · reasoning ${escapeHtml(fmt(totals.reasoning))} · cache R ${escapeHtml(fmt(totals.cacheRead))} · cache W ${escapeHtml(cacheWriteText(block, totals))}</div>
+              ${renderToolTable(rows)}
+              <div class="conservation ${blockExact ? "good" : "bad"}"><strong>Agent tool-token conservation:</strong> ${blockExact ? "exact" : "not exact"}</div>
+            </div>
+          </details>`;
+        }).join("");
+        byId("toolUsage").innerHTML = `<div class="tool-summary">
+          <div><strong>Global totals:</strong> ${escapeHtml(fmt(globalTotals.calls))} calls · ${escapeHtml(fmt(globalTotals.errors))} errors · input ${escapeHtml(fmt(globalTotals.input))} · output ${escapeHtml(fmt(globalTotals.output))} · reasoning ${escapeHtml(fmt(globalTotals.reasoning))} · cache R ${escapeHtml(fmt(globalTotals.cacheRead))} · cache W ${escapeHtml(globalCacheWrite)} · total ${escapeHtml(fmt(globalTotals.total))}</div>
+          <div class="conservation ${globalExact ? "good" : "bad"}"><strong>Global tool-token conservation:</strong> ${globalExact ? "exact" : "not exact"}${Object.keys(globalDelta).length ? ` · delta ${escapeHtml(deltaText)}` : ""}</div>
+        </div>${blockMarkup}`;
+      }
+
+      function renderReviewers(reviewerSummary = {}) {
+        const summaryRecord = objectOrEmpty(reviewerSummary);
+        const bySlot = summaryRecord.bySlot || {};
+        const entries = Array.isArray(bySlot)
+          ? bySlot.map((summary, index) => [objectOrEmpty(summary).slot ?? index + 1, summary])
+          : Object.entries(objectOrEmpty(bySlot));
+        if (!entries.length) { byId("reviewers").innerHTML = '<div class="empty">No reviewer slot data.</div>'; return; }
+
+        entries.sort(([left], [right]) => Number(left) - Number(right));
+        const slotTotal = (summary) => numeric(firstDefined(objectOrEmpty(summary).total, objectOrEmpty(summary).count)) ?? 0;
+        const slotRate = (summary, verdict) => {
+          const record = objectOrEmpty(summary);
+          const rates = objectOrEmpty(record.rates || record.percentages);
+          const rate = firstDefined(rates[verdict], rates[verdict.toLowerCase()]);
+          if (rate !== undefined) return numeric(rate) ?? 0;
+          const counts = objectOrEmpty(record.counts || record.verdicts || record);
+          const count = numeric(firstDefined(counts[verdict], counts[verdict.toLowerCase()])) ?? 0;
+          const total = slotTotal(record);
+          return total ? count / total : 0;
+        };
+        const rows = entries.map(([slot, summary]) => `<tr>
+          ${cell(slot)}${cell(fmt(slotTotal(summary)), "num")}
+          ${cell(percent(slotRate(summary, "ISSUE")), "num")}
+          ${cell(percent(slotRate(summary, "PASS")), "num")}
+          ${cell(percent(slotRate(summary, "UNKNOWN")), "num")}
+        </tr>`).join("");
+        const second = objectOrEmpty(summaryRecord.secondAfterFirstPass);
+        const secondIssueRate = firstDefined(second.issueRate, objectOrEmpty(second.rates).ISSUE, second.rate);
+        const rateLine = `<div class="muted" style="margin-bottom:10px">Second after first PASS ISSUE: ${escapeHtml(percent(secondIssueRate))} (${escapeHtml(fmt(second.eligible))} eligible)</div>`;
+        byId("reviewers").innerHTML = `${rateLine}<table><thead><tr>${header("Slot")}${header("Total", "num")}${header("ISSUE", "num")}${header("PASS", "num")}${header("UNKNOWN", "num")}</tr></thead><tbody>${rows}</tbody></table>`;
+      }
+
+      function renderSchema(schema) {
+        const tableNames = ["session", "message", "part"];
+        const record = objectOrEmpty(schema);
+        const tables = objectOrEmpty(record.tables);
+        byId("schema").innerHTML = `<div class="schema">${tableNames.map((name) =>
+          `<span class="${tables[name]?.usable ? "ok" : ""}">${name}: ${tables[name]?.usable ? "ready" : "missing"}</span>`).join("")}</div>
+          <p>${record.ok ? "All required capabilities are available." : "Required schema capabilities are unavailable; showing an empty aggregate."}</p>`;
+      }
+
+      function renderPricing(pricing = {}, toolUsage = {}) {
+        const root = objectOrEmpty(pricing);
+        const components = objectOrEmpty(root.components);
+        const coverage = objectOrEmpty(root.coverage);
+        const priced = numeric(coverage.priced) ?? 0;
+        const unpriced = numeric(coverage.unpriced) ?? 0;
+        const coverageRate = priced + unpriced ? priced / (priced + unpriced) : null;
+        const conservation = objectOrEmpty(objectOrEmpty(toolUsage).conservation);
+        const conserved = conservation.exact === true || conservation.ok === true;
+        const componentRows = [
+          ["Input", components.input],
+          ["Cached input read", components.cacheRead],
+          ["Cache writes", components.cacheWrite],
+          ["Output + reasoning", components.output],
+        ].map(([name, amount]) => `<tr>${cell(name)}${cell(moneyValue(amount), "num")}</tr>`).join("");
+        byId("pricing").innerHTML = `<div class="pricing-note">
+          <div><strong>Estimated API-equivalent total:</strong> ${escapeHtml(moneyValue(root.estimatedUSD))}</div>
+          <div class="muted">Current public OpenAI API rates as of ${escapeHtml(display(root.date))}; not billed cost. Formula: uncached input + cached reads + cache writes + (output + reasoning). Requests above ${escapeHtml(fmt(root.longContextThreshold))} prompt tokens use long-context rates.</div>
+          <div class="muted">Tool tokens are attributed evenly per tool call within each model step. This is an allocation estimate, not causal per-tool metering; no-tool usage remains explicit as Unattributed.</div>
+          <div>Pricing coverage: ${escapeHtml(coverageRate === null ? "—" : percent(coverageRate))} (${escapeHtml(fmt(priced))} priced · ${escapeHtml(fmt(unpriced))} unpriced) · ${escapeHtml(display(root.currency))} ${escapeHtml(display(root.unit))}</div>
+          <div>Source: ${escapeHtml(display(root.source))}</div>
+          <div class="conservation ${conserved ? "good" : "bad"}"><strong>Tool-token conservation:</strong> ${conserved ? "exact" : "not exact"}</div>
+        </div><div style="overflow:auto"><table><thead><tr>${header("Cost component")}${header("Estimated API $", "num")}</tr></thead><tbody>${componentRows}</tbody></table></div>`;
+      }
+
+      function sessionOptionEntries(sessionOptions) {
+        if (!Array.isArray(sessionOptions)) return [];
+        const showTitles = byId("showSessionTitles").checked;
+        const seen = new Set();
+        return sessionOptions.map((source) => objectOrEmpty(source)).map((option) => {
+          const key = scalarValue(option.alias, option.id, option.sessionId, option.session, option.value, option.key);
+          if (!hasValue(key)) return null;
+          const value = String(key);
+          if (seen.has(value)) return null;
+          seen.add(value);
+          const timestamp = firstDefined(option.timestamp, option.createdAt, option.updatedAt);
+          const title = showTitles ? scalarValue(option.title, option.sessionTitle) : null;
+          const parent = objectOrEmpty(option.parent);
+          const parentAlias = scalarValue(option.parentAlias, option.parentSessionAlias, option.parentSession, parent.alias, parent.sessionAlias);
+          const kind = scalarValue(option.kind, option.type) || (parentAlias ? "child" : "root");
+          const aliasLabel = `Session ${value.slice(0, 8)}`;
+          const label = [title, aliasLabel, formatDateTime(timestamp), fieldText(kind), fieldText(option.agent), fieldText(option.model)]
+            .filter((part) => hasValue(part) && part !== "—").join(" · ") || aliasLabel;
+          return { value, label, title, parentAlias, kind };
+        }).filter(Boolean);
+      }
+
+      function rootSessionValue(value, entries) {
+        const byValue = new Map(entries.map((entry) => [entry.value, entry]));
+        let current = byValue.get(value);
+        if (!current) return "";
+        const visited = new Set([current.value]);
+        while (current.parentAlias && byValue.has(current.parentAlias) && !visited.has(current.parentAlias)) {
+          current = byValue.get(current.parentAlias);
+          visited.add(current.value);
+        }
+        return current.kind === "root" ? current.value : "";
+      }
+
+      function renderSessionOptions(sessionOptions) {
+        if (!Array.isArray(sessionOptions)) return;
+        const select = byId("session");
+        const entries = sessionOptionEntries(sessionOptions);
+        const options = entries.filter((option) => option.kind === "root");
+        const selectedRoot = rootSessionValue(selectedSessionAlias, entries);
+        const showTitles = byId("showSessionTitles").checked;
+        const optionMarkup = showTitles
+          ? [...options.reduce((groups, option) => {
+            const group = option.title || "Untitled root sessions";
+            if (!groups.has(group)) groups.set(group, []);
+            groups.get(group).push(option);
+            return groups;
+          }, new Map())].map(([group, groupOptions]) => `<optgroup label="${escapeHtml(group)}">${groupOptions.map((option) =>
+            `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`).join("")}</optgroup>`).join("")
+          : options.map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`).join("");
+        select.innerHTML = `<option value="">All sessions</option>${optionMarkup}`;
+        select.value = options.some((option) => option.value === selectedRoot) ? selectedRoot : "";
+      }
+
+      function renderTopology(sessionOptions) {
+        const entries = sessionOptionEntries(sessionOptions);
+        if (!entries.length) { byId("topology").innerHTML = ""; return; }
+        const byValue = new Map(entries.map((entry) => [entry.value, entry]));
+        const children = new Map();
+        for (const entry of entries) {
+          if (entry.parentAlias && byValue.has(entry.parentAlias) && entry.parentAlias !== entry.value) {
+            if (!children.has(entry.parentAlias)) children.set(entry.parentAlias, []);
+            children.get(entry.parentAlias).push(entry);
+          }
+        }
+        const renderNode = (entry, level, path = new Set()) => {
+          if (path.has(entry.value)) return "";
+          const nextPath = new Set(path).add(entry.value);
+          const childEntries = (children.get(entry.value) || []).filter((child) => !nextPath.has(child.value));
+          const selected = selectedSessionAlias === entry.value;
+          return `<li role="treeitem" aria-level="${level}"${childEntries.length ? ' aria-expanded="true"' : ""}>
+            <button class="scope-node" type="button" data-session="${escapeHtml(entry.value)}" aria-pressed="${selected}">${escapeHtml(entry.label)}</button>
+            ${childEntries.length ? `<ul role="group">${childEntries.map((child) => renderNode(child, level + 1, nextPath)).join("")}</ul>` : ""}
+          </li>`;
+        };
+        const roots = entries.filter((entry) => !entry.parentAlias || !byValue.has(entry.parentAlias));
+        const selected = byValue.get(selectedSessionAlias);
+        let visibleRoots;
+        let description;
+        if (selected) {
+          let root = selected;
+          const visited = new Set([root.value]);
+          while (root.parentAlias && byValue.has(root.parentAlias) && !visited.has(root.parentAlias)) {
+            root = byValue.get(root.parentAlias);
+            visited.add(root.value);
+          }
+          visibleRoots = [root];
+          description = "Showing the selected session's spawn tree.";
+        } else {
+          const spawnRoots = roots.filter((entry) => (children.get(entry.value) || []).length);
+          visibleRoots = spawnRoots.slice(0, 12);
+          description = spawnRoots.length > visibleRoots.length
+            ? `Showing ${visibleRoots.length} of ${spawnRoots.length} recent root sessions that spawned subagents.`
+            : `Showing ${spawnRoots.length} root session${spawnRoots.length === 1 ? "" : "s"} that spawned subagents.`;
+        }
+        if (!visibleRoots.length) {
+          byId("topology").innerHTML = '<h3>Spawn topology</h3><div class="empty">No parent-child session links in this scope.</div>';
+          return;
+        }
+        const rootMarkup = visibleRoots.map((entry) => renderNode(entry, 1)).join("");
+        byId("topology").innerHTML = `<h3>Spawn topology</h3><div class="muted">${escapeHtml(description)} Select a node to scope all metrics.</div><ul class="topology-tree" role="tree" aria-label="Session spawn topology">${rootMarkup}</ul>`;
+      }
+
+      const rangeLabel = (payload) => {
+        const range = objectOrEmpty(objectOrEmpty(payload).range);
+        return display(firstDefined(range.label, range.value, objectOrEmpty(payload).range));
+      };
+      const scopeCount = (payload) => {
+        const record = objectOrEmpty(payload);
+        return firstDefined(record.scopeCount, objectOrEmpty(record.scope).count, objectOrEmpty(record.scope).total, objectOrEmpty(record.summary).scopeCount);
+      };
+
+      let currentRange = "30d";
+      let inFlight = null;
+      let queuedReload = false;
+      let lastCheckedAt = null;
+      let nextRefreshAt = null;
+      let currentSessionOptions = [];
+      let selectedSessionAlias = "";
+
+      function updateRefreshCountdown() {
+        const countdown = byId("refreshCountdown");
+        if (document.hidden) {
+          countdown.textContent = "Auto-refresh paused while hidden";
+          return;
+        }
+        if (inFlight) {
+          countdown.textContent = "Refreshing…";
+          return;
+        }
+        if (!lastCheckedAt || !nextRefreshAt) {
+          countdown.textContent = "Refresh in 60s";
+          return;
+        }
+        const remaining = Math.max(0, Math.ceil((nextRefreshAt - Date.now()) / 1000));
+        countdown.textContent = `Refresh in ${remaining}s`;
+        if (remaining <= 0) load(currentRange);
+      }
+
+      function renderStatus(payload = {}, error = "") {
+        const prefix = error ? `Error: ${display(error)}` : `${rangeLabel(payload)} · generatedAt ${formatDateTime(payload.generatedAt)}`;
+        byId("status").textContent = `${prefix} · last checked ${formatDateTime(lastCheckedAt)} · scope count ${fmt(scopeCount(payload))}`;
+        byId("status").className = error ? "status error" : "status";
+      }
+
+      function clearData() {
+        ["cards", "groups", "toolUsage", "reviewers", "schema", "pricing", "topology"].forEach((id) => { byId(id).innerHTML = ""; });
+      }
+
+      function load(range = currentRange, queueIfBusy = false) {
+        currentRange = range || currentRange;
+        if (inFlight) {
+          if (queueIfBusy) queuedReload = true;
+          return inFlight;
+        }
+        const requestedRange = currentRange;
+        const requestedSession = selectedSessionAlias;
+        byId("refresh").disabled = true;
+        byId("status").textContent = `Loading… · last checked ${formatDateTime(lastCheckedAt)} · scope count —`;
+        byId("status").className = "status";
+        const request = (async () => {
+          let payload = {};
+          let failure = null;
+          try {
+            const params = new URLSearchParams();
+            params.set("range", requestedRange);
+            params.set("session", requestedSession);
+            if (byId("showSessionTitles").checked) params.set("includeSessionTitles", "1");
+            const response = await fetch(`/api/metrics?${params.toString()}`, { cache: "no-store" });
+            let rawPayload = {};
+            try { rawPayload = await response.json(); } catch { rawPayload = {}; }
+            payload = rawPayload && typeof rawPayload === "object" && !Array.isArray(rawPayload) ? rawPayload : {};
+            if (!response.ok) throw new Error(display(payload.error) === "—" ? "Database unavailable" : display(payload.error));
+            currentSessionOptions = Array.isArray(payload.sessionOptions) ? payload.sessionOptions : [];
+            renderSessionOptions(currentSessionOptions);
+            renderTopology(currentSessionOptions);
+            renderCards(payload.summary);
+            renderGroups(payload.groups);
+            renderToolUsage(payload.toolUsage);
+            renderReviewers(payload.reviewerSummary);
+            renderSchema(payload.schema);
+            const pricing = payload.pricing ?? payload.pricingMetadata ?? (payload.pricingComponents ? { components: payload.pricingComponents } : {});
+            renderPricing(pricing, payload.toolUsage);
+          } catch (error) {
+            failure = error?.message || "Unable to load metrics.";
+            clearData();
+          }
+          lastCheckedAt = Date.now();
+          nextRefreshAt = lastCheckedAt + REFRESH_MS;
+          renderStatus(payload, failure);
+          return payload;
+        })();
+        inFlight = request;
+        request.then(() => {
+          inFlight = null;
+          byId("refresh").disabled = false;
+          updateRefreshCountdown();
+          if (queuedReload && !document.hidden) {
+            queuedReload = false;
+            load(currentRange);
+          }
+        }, () => {
+          inFlight = null;
+          byId("refresh").disabled = false;
+          updateRefreshCountdown();
+        });
+        return request;
+      }
+
+      document.querySelectorAll("[data-range]").forEach((button) => {
+        button.addEventListener("click", () => {
+          document.querySelectorAll("[data-range]").forEach((item) => item.classList.toggle("active", item === button));
+          load(button.dataset.range, true);
+        });
+      });
+      byId("session").addEventListener("change", () => {
+        selectedSessionAlias = byId("session").value || "";
+        load(currentRange, true);
+      });
+      byId("showSessionTitles").addEventListener("change", () => {
+        if (!byId("showSessionTitles").checked) {
+          renderSessionOptions(currentSessionOptions);
+          renderTopology(currentSessionOptions);
+        }
+        load(currentRange, true);
+      });
+      byId("topology").addEventListener("click", (event) => {
+        const node = event.target.closest("button[data-session]");
+        if (!node) return;
+        selectedSessionAlias = node.dataset.session;
+        renderSessionOptions(currentSessionOptions);
+        renderTopology(currentSessionOptions);
+        load(currentRange, true);
+      });
+      byId("refresh").addEventListener("click", () => load(currentRange));
+      document.addEventListener("visibilitychange", () => {
+        updateRefreshCountdown();
+        if (!document.hidden && (queuedReload || !lastCheckedAt || Date.now() - lastCheckedAt >= REFRESH_MS)) load(currentRange);
+      });
+      window.setInterval(updateRefreshCountdown, 1000);
+      load(currentRange);
+    </script>
+  </body>
+</html>
