@@ -48,15 +48,15 @@ function dashboardDocument() {
   const ids = [
     "status", "featureStatus", "featureStatusMessage", "refreshCountdown", "refresh", "session", "showSessionTitles", "currentViewContext",
     "cards", "groups", "toolUsage", "reviewers", "schema", "pricing", "topology",
-    "architectureViewPanel", "throughputViewPanel", "investigateViewPanel", "environmentViewPanel",
-    "architectureViewMount", "throughputViewMount", "investigateViewMount", "environmentViewMount",
+    "harnessViewPanel", "architectureViewPanel", "throughputViewPanel", "investigateViewPanel", "environmentViewPanel",
+    "harnessViewMount", "architectureViewMount", "throughputViewMount", "investigateViewMount", "environmentViewMount",
     "appSidebar", "mobileMenuToggle", "mobileDrawerClose", "mobileDrawerBackdrop", "sidebarToggle",
     "themeMode", "commandPaletteToggle", "commandPalette", "commandPaletteClose", "commandPaletteInput",
     "commandPaletteList", "commandPaletteStatus", "retryLoad",
   ];
   const elements = new Map(ids.map((id) => [id, new FakeElement(id)]));
   const ranges = ["24h", "7d", "30d", "all"].map((range) => new FakeElement(`range-${range}`, { range }));
-  const views = ["overview", "architecture", "throughput", "investigate", "environment"]
+  const views = ["overview", "harness", "architecture", "throughput", "investigate", "environment"]
     .map((view) => new FakeElement(`view-${view}`, { view }));
   const documentRef = {
     hidden: false,
@@ -178,7 +178,10 @@ test("dashboard integration preserves shared privacy filters and requests a prio
     assert.equal(app.buildMetricsQuery({ range: "7d", bounds: { from: 4_000 } }).toString(), "range=7d");
     assert.deepEqual(app.previousPeriodBounds({ range: { from: 4_000, to: 5_000 } }), { from: 3_000, to: 4_000 });
 
+    app.activateView("harness");
+    assert.notEqual(documentRef.elements.get("harnessViewMount").innerHTML, "");
     app.activateView("architecture");
+    assert.equal(documentRef.elements.get("harnessViewMount").innerHTML, "");
     assert.notEqual(documentRef.elements.get("architectureViewMount").innerHTML, "");
     app.activateView("environment");
     assert.equal(documentRef.elements.get("architectureViewMount").listeners.size, 0);
@@ -193,6 +196,8 @@ test("dashboard integration preserves shared privacy filters and requests a prio
     assert.equal(documentRef.elements.get("environmentViewMount").innerHTML.includes("No saved baseline yet"), false);
     assert.equal(documentRef.ranges.find((element) => element.dataset.range === "7d").getAttribute("aria-pressed"), "true");
     assert.equal(documentRef.views.find((element) => element.dataset.view === "environment").getAttribute("aria-current"), "page");
+    assert.equal(app.activateView("unknown-view"), "overview");
+    assert.equal(documentRef.elements.get("currentViewContext").textContent, "Overview");
   } finally {
     globalThis.document = originalDocument;
     globalThis.window = originalWindow;
@@ -204,6 +209,9 @@ test("fresh dashboard selects 24h and keeps pricing as the final page section", 
   const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
   assert.match(html, /data-range="24h" class="active" aria-pressed="true"/);
   assert.match(html, /data-range="30d" aria-pressed="false"/);
+  assert.ok(html.indexOf('data-view="overview"') < html.indexOf('data-view="harness"'));
+  assert.ok(html.indexOf('data-view="harness"') < html.indexOf('data-view="architecture"'));
+  assert.ok(html.indexOf("id=\"harnessViewPanel\"") < html.indexOf("id=\"architectureViewPanel\""));
   assert.ok(html.indexOf("id=\"featureViews\"") < html.indexOf("id=\"pricingSection\""));
   assert.ok(html.indexOf("id=\"environmentViewPanel\"") < html.indexOf("id=\"pricingSection\""));
   assert.ok(html.indexOf("id=\"pricingSection\"") < html.indexOf("</main>"));
@@ -238,6 +246,12 @@ test("command palette filters and activates existing navigation paths", async ()
     documentRef.emit("keydown", { key: "Escape" });
     assert.equal(documentRef.body.classList.contains("command-open"), false);
     assert.equal(documentRef.activeElement, commandTrigger);
+    app.openCommandPalette(commandTrigger);
+    input.value = "harness";
+    input.emit("input");
+    assert.match(documentRef.elements.get("commandPaletteList").innerHTML, /Go to Harness/);
+    input.emit("keydown", input, { key: "Enter" });
+    assert.equal(documentRef.elements.get("currentViewContext").textContent, "Harness");
   } finally {
     globalThis.document = originalDocument;
     globalThis.window = originalWindow;

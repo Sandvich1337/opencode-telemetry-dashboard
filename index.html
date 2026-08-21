@@ -6,6 +6,7 @@
     <meta name="theme-color" content="#f5f8fc">
     <title>OpenCode telemetry</title>
     <link rel="stylesheet" href="/dashboard/views/architecture.css">
+    <link rel="stylesheet" href="/dashboard/views/harness.css">
     <link rel="stylesheet" href="/dashboard/views/throughput.css">
     <link rel="stylesheet" href="/dashboard/views/investigate.css">
     <link rel="stylesheet" href="/dashboard/views/environment.css">
@@ -34,6 +35,9 @@
           <nav id="dashboardNav" class="dashboard-nav" aria-label="Dashboard views">
             <button type="button" data-view="overview" class="active" aria-current="page" aria-controls="legacyOverview">
               <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><rect x="4" y="4" width="6" height="7" rx="1"/><rect x="14" y="4" width="6" height="4" rx="1"/><rect x="14" y="11" width="6" height="9" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/></svg></span><span class="nav-label">Overview</span>
+            </button>
+            <button type="button" data-view="harness" aria-controls="harnessViewPanel">
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M7 5h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8 9h8M8 13h5M8 17h3" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.7"/></svg></span><span class="nav-label">Harness</span>
             </button>
             <button type="button" data-view="architecture" aria-controls="architectureViewPanel">
               <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><circle cx="12" cy="5" r="2"/><circle cx="5" cy="18" r="2"/><circle cx="19" cy="18" r="2"/><path d="m11 7-5 9m7-9 5 9M7 18h10" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6"/></svg></span><span class="nav-label">Architecture</span>
@@ -112,6 +116,7 @@
             </div>
           </section>
           <div id="featureViews" class="feature-views" aria-live="off">
+            <section id="harnessViewPanel" class="view-panel" aria-labelledby="harness-view-title" hidden><div id="harnessViewMount" class="view-mount" data-view-mount="harness"></div></section>
             <section id="architectureViewPanel" class="view-panel" aria-labelledby="architecture-view-label" hidden><h2 id="architecture-view-label" class="sr-only">Architecture investigation</h2><div id="architectureViewMount" class="view-mount" data-view-mount="architecture" role="region" aria-label="Architecture investigation"></div></section>
             <section id="throughputViewPanel" class="view-panel" aria-labelledby="throughput-view-label" hidden><h2 id="throughput-view-label" class="sr-only">Throughput investigation</h2><div id="throughputViewMount" class="view-mount" data-view-mount="throughput" role="region" aria-label="Throughput investigation"></div></section>
             <section id="investigateViewPanel" class="view-panel" aria-labelledby="investigate-view-label" hidden><h2 id="investigate-view-label" class="sr-only">Investigation comparisons</h2><div id="investigateViewMount" class="view-mount" data-view-mount="investigate" role="region" aria-label="Investigation comparisons"></div></section>

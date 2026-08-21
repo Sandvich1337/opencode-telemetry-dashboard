@@ -5,6 +5,7 @@ import { createDashboardState } from "./core/state.mjs";
 import { createViewRegistry } from "./core/views.mjs";
 import { createArchitectureView } from "./views/architecture.mjs";
 import { createEnvironmentView } from "./views/environment.mjs";
+import { createHarnessView } from "./views/harness.mjs";
 import { createInvestigateView } from "./views/investigate.mjs";
 import { createThroughputView } from "./views/throughput.mjs";
 
@@ -15,18 +16,21 @@ export const dashboardViews = createViewRegistry(document);
 const byId = (id) => document.getElementById(id);
 const renderers = createRenderers(document);
 const viewFactories = Object.freeze({
+  harness: createHarnessView,
   architecture: createArchitectureView,
   throughput: createThroughputView,
   investigate: createInvestigateView,
   environment: createEnvironmentView,
 });
 const viewMounts = Object.freeze({
+  harness: "harnessViewMount",
   architecture: "architectureViewMount",
   throughput: "throughputViewMount",
   investigate: "investigateViewMount",
   environment: "environmentViewMount",
 });
 const viewPanels = Object.freeze({
+  harness: "harnessViewPanel",
   architecture: "architectureViewPanel",
   throughput: "throughputViewPanel",
   investigate: "investigateViewPanel",
@@ -44,6 +48,7 @@ let architectureMetric = "calls";
 
 const VIEW_LABELS = Object.freeze({
   overview: "Overview",
+  harness: "Harness",
   architecture: "Architecture",
   throughput: "Throughput",
   investigate: "Investigate",
@@ -55,6 +60,7 @@ const SIDEBAR_STORAGE_KEY = "opencode-telemetry-sidebar-collapsed";
 const THEME_COLORS = Object.freeze({ light: "#f5f8fc", dark: "#06101d" });
 const COMMANDS = Object.freeze([
   { id: "view-overview", group: "Navigate", label: "Go to Overview", hint: "Summary and current telemetry", keywords: "home summary", action: () => activateView("overview") },
+  { id: "view-harness", group: "Navigate", label: "Go to Harness", hint: "Review acceptance and routing guarantees", keywords: "cost accepted change routing", action: () => activateView("harness") },
   { id: "view-architecture", group: "Navigate", label: "Go to Architecture", hint: "Trace agents, models, and topology", keywords: "graph", action: () => activateView("architecture") },
   { id: "view-throughput", group: "Navigate", label: "Go to Throughput", hint: "Inspect volume and efficiency", keywords: "rate", action: () => activateView("throughput") },
   { id: "view-investigate", group: "Navigate", label: "Go to Investigate", hint: "Compare telemetry dimensions", keywords: "compare", action: () => activateView("investigate") },

@@ -1,0 +1,116 @@
+.harness-view {
+  --harness-border: var(--line, var(--border, #d8e2ee));
+  --harness-muted: var(--muted-foreground, #5f7693);
+  --harness-surface: var(--panel, var(--card, #ffffff));
+  --harness-surface-raised: var(--surface-raised, var(--muted, #edf3f9));
+  --harness-accent-soft: var(--accent, #dce8f5);
+  --harness-accent: var(--primary, #12345b);
+  --harness-focus: var(--ring, #2c6ca7);
+  --harness-text: var(--text, var(--foreground, #10233f));
+  --harness-unavailable: var(--foreground);
+  color: var(--harness-text);
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+  margin-top: 14px;
+}
+
+.harness-header,
+.harness-section-heading {
+  align-items: flex-start;
+  display: flex;
+  gap: .75rem;
+  justify-content: space-between;
+}
+
+.harness-header {
+  background: var(--harness-surface);
+  border: 1px solid var(--harness-border);
+  border-radius: var(--radius, 10px);
+  box-shadow: var(--shadow-sm, 0 1px 2px rgb(16 35 63 / .05));
+  padding: 15px;
+}
+
+.harness-header h2,
+.harness-section h3 { letter-spacing: -.02em; margin: 0; }
+.harness-header h2 { font-size: clamp(1.35rem, 3vw, 1.9rem); }
+.harness-header p,
+.harness-section-note,
+.harness-primary-description { color: var(--harness-muted); line-height: 1.5; margin: .3rem 0 0; }
+.harness-kicker,
+.harness-eyebrow { color: var(--harness-muted); display: block; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.harness-kicker { margin-bottom: .35rem; }
+.harness-state,
+.harness-badge { border: 1px solid var(--harness-border); border-radius: 999px; color: var(--harness-muted); flex: 0 0 auto; font-size: .72rem; font-weight: 650; padding: .28rem .55rem; }
+
+.harness-section {
+  background: var(--harness-surface);
+  border: 1px solid var(--harness-border);
+  border-radius: var(--radius, 10px);
+  box-shadow: var(--shadow-sm, 0 1px 2px rgb(16 35 63 / .05));
+  min-width: 0;
+  padding: 15px;
+}
+
+.harness-primary { border-left: 3px solid var(--harness-accent); }
+.harness-section-heading { margin-bottom: .75rem; }
+.harness-formula {
+  background: var(--harness-surface-raised);
+  border: 1px solid var(--harness-border);
+  border-radius: calc(var(--radius, 10px) - 2px);
+  font-size: clamp(.95rem, 2vw, 1.15rem);
+  margin: 0;
+  overflow-wrap: anywhere;
+  padding: .8rem;
+}
+.harness-formula code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+.harness-value-label { color: var(--harness-muted); font-size: .78rem; font-weight: 650; margin: .85rem 0 .2rem; }
+.harness-value { font-size: 1.15rem; font-weight: 700; margin: 0; }
+.harness-unavailable { color: var(--harness-unavailable); font-weight: 700; }
+
+.harness-definitions {
+  display: grid;
+  gap: .65rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr));
+  margin: 0;
+}
+.harness-definition { background: var(--harness-surface-raised); border: 1px solid var(--harness-border); border-radius: calc(var(--radius, 10px) - 2px); min-width: 0; padding: .8rem; }
+.harness-definition dt { font-weight: 700; }
+.harness-definition dd { margin: .35rem 0 0; }
+.harness-definition p { color: var(--harness-muted); font-size: .84rem; line-height: 1.45; margin: 0; }
+.harness-definition p + p { margin-top: .55rem; }
+
+.harness-table-scroll {
+  border: 1px solid var(--harness-border);
+  border-radius: calc(var(--radius, 10px) - 2px);
+  margin-top: .75rem;
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-color: var(--harness-border) transparent;
+}
+.harness-table-scroll:focus-visible { outline: 3px solid var(--harness-focus); outline-offset: 2px; }
+.harness-table { border-collapse: collapse; min-width: 620px; width: 100%; }
+.harness-table caption { color: var(--harness-muted); font-size: .78rem; padding: .55rem .7rem; text-align: left; }
+.harness-table th,
+.harness-table td { border-bottom: 1px solid var(--harness-border); padding: .65rem .7rem; text-align: left; vertical-align: top; }
+.harness-table th { font-size: .82rem; font-weight: 650; }
+.harness-table thead th { background: var(--harness-surface-raised); color: var(--harness-muted); font-size: .76rem; white-space: nowrap; }
+.harness-table tbody th { background: var(--harness-surface); min-width: 270px; }
+.harness-table tbody td { color: var(--harness-muted); }
+.harness-table tr:last-child th,
+.harness-table tr:last-child td { border-bottom: 0; }
+
+@media (max-width: 620px) {
+  .harness-view { gap: .75rem; }
+  .harness-header,
+  .harness-section { padding: .8rem; }
+  .harness-header,
+  .harness-section-heading { flex-wrap: wrap; }
+  .harness-table { min-width: 560px; }
+  .harness-table tbody th { min-width: 230px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .harness-view * { scroll-behavior: auto; transition: none !important; }
+}
