@@ -27,6 +27,7 @@ test("renders the planned formula with explicit unavailable values", () => {
   const html = renderHarnessView();
   assert.match(html, /total attributable harness cost in scope \/ unique verified accepted changes in scope/);
   assert.match(html, /Unavailable — harness outcome data is not connected/);
+  assert.match(html, /<span class="harness-unavailable" role="status">Unavailable — harness outcome data is not connected<\/span>/);
   assert.match(html, /Eligible task volume/);
   assert.match(html, /Unique verified accepted changes/);
   assert.match(html, /Verification\/review\/gate coverage/);
