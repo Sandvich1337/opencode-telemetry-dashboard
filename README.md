@@ -32,6 +32,24 @@ session run. Parent-child sessions are shown in a compact spawn topology;
 clicking an individual child scopes the cards and tables to that child alone.
 Tool usage is split into collapsible agent blocks in both views.
 
+The dashboard navigation keeps the legacy summary and sortable tables visible
+while exposing Architecture, Throughput, Investigate, and Environment views.
+For finite ranges, the investigation views request an equal-length preceding
+period with the same session and privacy options. Throughput comparisons show
+the denominator and sample evidence; unavailable analytics remain explicitly
+unavailable rather than becoming zero.
+
+Navigation and time-range controls are keyboard accessible and remain usable at
+narrow widths; changing a filter keeps the latest request authoritative. The
+configured-inventory opt-in is withdrawn from the visible view immediately,
+before the refreshed request completes.
+
+Configured environment inventory is shown only after both the local checkbox
+and the server request opt in. The Environment view can save a redacted local
+baseline and compare it with later data, or download the allow-listed aggregate
+inventory as deterministic JSON or principal CSV. Downloads are generated in
+the browser and never send data to a remote service.
+
 ## Metrics
 
 Only `session`, `message`, and `part` are read. The dashboard reports runs and

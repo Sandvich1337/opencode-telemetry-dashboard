@@ -1,0 +1,814 @@
+.architecture-view {
+  --architecture-border: var(--line, var(--border, #d8e2ee));
+  --architecture-muted: var(--muted-foreground, #5f7693);
+  --architecture-surface: var(--panel, var(--card, #ffffff));
+  --architecture-surface-raised: var(--surface-raised, var(--muted, #edf3f9));
+  --architecture-accent-soft: var(--accent, #dce8f5);
+  --architecture-accent: var(--primary, #12345b);
+  --architecture-ring: var(--ring, #2c6ca7);
+  --architecture-focus: var(--ring, #2c6ca7);
+  --architecture-text: var(--text, var(--foreground, #10233f));
+  --architecture-good: var(--good, #16805a);
+  --architecture-warning: var(--warning, #a16207);
+  --architecture-danger: var(--bad, var(--destructive, #b4233c));
+  color: var(--architecture-text);
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+  margin-top: 14px;
+}
+
+.architecture-header,
+.architecture-section-heading,
+.architecture-node-title,
+.architecture-role-card header,
+.architecture-routing-card header,
+.architecture-advice-card header,
+.architecture-route-list li {
+  align-items: center;
+  display: flex;
+  gap: .75rem;
+}
+
+.architecture-header,
+.architecture-section-heading {
+  justify-content: space-between;
+}
+
+.architecture-header {
+  align-items: flex-start;
+  background: var(--architecture-surface);
+  border: 1px solid var(--architecture-border);
+  border-radius: var(--radius, 10px);
+  box-shadow: var(--shadow-sm, 0 1px 2px rgb(16 35 63 / .05));
+  padding: 15px;
+}
+
+.architecture-header h2,
+.architecture-section-heading h3,
+.architecture-section-heading h4,
+.architecture-role-card h4,
+.architecture-routing-card h4,
+.architecture-advice-card h4,
+.architecture-topology-layer h4,
+.architecture-edge-summary h4,
+.architecture-routing > h4 {
+  margin: 0;
+}
+
+.architecture-header h2 {
+  font-size: clamp(1.25rem, 2.5vw, 1.7rem);
+}
+
+.architecture-kicker,
+.architecture-section-heading p,
+.architecture-description,
+.architecture-execution-description,
+.architecture-critical-path,
+.architecture-role-card p,
+.architecture-routing-card p,
+.architecture-advice-card p {
+  color: var(--architecture-text);
+  margin: .25rem 0 0;
+}
+
+.architecture-kicker {
+  font-size: .75rem;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.architecture-eyebrow {
+  color: var(--architecture-muted);
+  font-size: .72rem;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.architecture-metric-controls {
+  background: var(--architecture-surface-raised);
+  border: 1px solid var(--architecture-border);
+  border-radius: calc(var(--radius, 10px) - 2px);
+  min-width: min(100%, 360px);
+  margin: 0;
+  padding: .65rem .75rem .55rem;
+}
+
+.architecture-metric-controls legend {
+  color: var(--architecture-text);
+  font-size: .8rem;
+  margin-bottom: .35rem;
+  padding: 0;
+}
+
+.architecture-metric-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .35rem;
+}
+
+.architecture-metric-button {
+  background: var(--architecture-surface);
+  border: 1px solid var(--architecture-border);
+  border-radius: calc(var(--radius, 10px) - 3px);
+  color: var(--architecture-text);
+  cursor: pointer;
+  min-height: 2.25rem;
+  padding: .35rem .7rem;
+}
+
+.architecture-metric-button:hover,
+.architecture-metric-button:focus-visible,
+.architecture-metric-button[aria-pressed="true"] {
+  background: var(--architecture-accent-soft);
+  border-color: var(--architecture-accent);
+  color: var(--accent-foreground, var(--architecture-text));
+}
+
+.architecture-metric-button:focus-visible,
+.architecture-view summary:focus-visible {
+  outline: 3px solid var(--architecture-focus);
+  outline-offset: 2px;
+}
+
+.architecture-metric-status {
+  color: var(--architecture-muted);
+  font-size: .78rem;
+  margin: .5rem 0 0;
+}
+
+.architecture-content {
+  display: grid;
+  gap: 1rem;
+}
+
+.architecture-section {
+  background: var(--architecture-surface);
+  border: 1px solid var(--architecture-border);
+  border-radius: var(--radius, 10px);
+  box-shadow: var(--shadow-sm, 0 1px 2px rgb(16 35 63 / .05));
+  min-width: 0;
+  padding: 15px;
+}
+
+.architecture-section-heading {
+  align-items: flex-start;
+  margin-bottom: .75rem;
+}
+
+.architecture-section-heading p {
+  color: var(--architecture-muted);
+  font-size: .86rem;
+}
+
+.architecture-topology-layers {
+  align-items: stretch;
+  display: grid;
+  gap: .75rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: .75rem;
+}
+
+.architecture-topology-visual {
+  background: var(--architecture-surface-raised);
+  border: 1px solid var(--architecture-border);
+  border-radius: calc(var(--radius, 10px) - 2px);
+  margin-top: .75rem;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: .65rem;
+}
+
+.architecture-topology-visual-heading {
+  align-items: baseline;
+  color: var(--architecture-muted);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: .8rem;
+  gap: .5rem .75rem;
+  justify-content: space-between;
+  margin: 0 .25rem .35rem;
+}
+
+.architecture-topology-svg {
+  display: block;
+  height: auto;
+  max-width: 100%;
+  min-width: 620px;
+  overflow: visible;
+  width: 100%;
+}
+
+.architecture-svg-edge {
+  fill: none;
+  stroke: var(--architecture-muted);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.architecture-svg-edge-delegates-to { stroke: var(--architecture-accent); stroke-width: 2; }
+.architecture-svg-edge-uses-model { stroke-dasharray: 4 3; }
+.architecture-svg-edge-calls-tool { stroke-dasharray: 1 3; }
+.architecture-topology-svg marker path { fill: var(--architecture-muted); }
+
+.architecture-svg-node rect {
+  fill: var(--architecture-surface);
+  stroke: var(--architecture-border);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.architecture-svg-node-agent rect { stroke: var(--architecture-accent); }
+.architecture-svg-node-model rect { stroke: var(--architecture-ring, var(--ring, #2c6ca7)); }
+.architecture-svg-node-tool rect { stroke: var(--architecture-muted); }
+.architecture-svg-node-type,
+.architecture-svg-node-alias {
+  fill: var(--architecture-muted);
+  font-size: 10px;
+}
+.architecture-svg-node-label,
+.architecture-svg-node-metric {
+  fill: var(--architecture-text);
+  font-size: 13px;
+  font-weight: 650;
+}
+.architecture-svg-node-metric { fill: var(--architecture-accent); }
+
+.architecture-topology-layer-labels {
+  color: var(--architecture-muted);
+  display: grid;
+  font-size: .72rem;
+  grid-template-columns: repeat(3, 1fr);
+  letter-spacing: .04em;
+  margin: .15rem .35rem 0;
+  text-transform: uppercase;
+}
+
+.architecture-topology-layer-labels span:nth-child(2) { text-align: center; }
+.architecture-topology-layer-labels span:nth-child(3) { text-align: right; }
+
+.architecture-topology-layer,
+.architecture-edge-summary,
+.architecture-routing,
+.architecture-execution-summary,
+.architecture-critical-path {
+  background: var(--architecture-surface-raised);
+  border: 1px solid var(--architecture-border);
+  border-radius: calc(var(--radius, 10px) - 3px);
+  padding: .75rem;
+}
+
+.architecture-topology-layer {
+  align-content: start;
+  display: grid;
+  grid-template-rows: auto auto;
+  min-width: 0;
+}
+
+.architecture-node-list,
+.architecture-edge-list,
+.architecture-route-list,
+.architecture-advice-evidence,
+.architecture-evidence ul {
+  list-style: none;
+  margin: .6rem 0 0;
+  padding: 0;
+}
+
+.architecture-node-list {
+  align-content: start;
+  display: grid;
+  grid-auto-rows: minmax(6rem, auto);
+  gap: .45rem;
+  min-height: 0;
+}
+
+.architecture-node {
+  align-content: start;
+  background: var(--architecture-surface-raised);
+  border: 1px solid var(--architecture-border);
+  border-left: 3px solid var(--architecture-accent);
+  border-radius: .3rem;
+  box-shadow: var(--shadow-sm, 0 1px 2px rgb(16 35 63 / .05));
+  display: grid;
+  gap: .15rem;
+  grid-template-rows: auto auto auto;
+  height: 100%;
+  min-height: 6rem;
+  min-width: 0;
+  padding: .55rem;
+}
+
+.architecture-node[data-node-type="model"] { border-left-color: var(--architecture-ring); }
+.architecture-node[data-node-type="tool"] { border-left-color: var(--architecture-muted); }
+
+.architecture-node-title {
+  flex-wrap: wrap;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.architecture-node-title strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.architecture-alias,
+.architecture-node-detail,
+.architecture-edge-type {
+  color: var(--architecture-muted);
+  font-size: .8rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.architecture-role-card header span,
+.architecture-routing-card header span,
+.architecture-advice-meta,
+.architecture-advice-evidence,
+.architecture-evidence li,
+.architecture-route-list,
+.architecture-route-list li {
+  color: var(--architecture-text);
+}
+
+.architecture-node-metric,
+.architecture-bottleneck-card dd,
+.architecture-execution-summary strong {
+  color: var(--architecture-accent);
+  font-weight: 700;
+}
+
+.architecture-edge-summary {
+  margin-top: .75rem;
+}
+
+.architecture-semantic-fallback {
+  border-top: 1px solid var(--architecture-border);
+  margin-top: .75rem;
+  overflow-x: auto;
+  padding-top: .65rem;
+}
+
+.architecture-semantic-fallback summary {
+  color: var(--architecture-muted);
+  cursor: pointer;
+  font-size: .86rem;
+  font-weight: 650;
+}
+
+.architecture-semantic-equivalent {
+  border-collapse: collapse;
+  margin-top: .65rem;
+  min-width: 620px;
+  width: 100%;
+}
+
+.architecture-semantic-equivalent th,
+.architecture-semantic-equivalent td {
+  border-bottom: 1px solid var(--architecture-border);
+  padding: .4rem .45rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.architecture-semantic-equivalent caption {
+  color: var(--architecture-muted);
+  margin-bottom: .35rem;
+  text-align: left;
+}
+
+.architecture-semantic-equivalent thead th {
+  color: var(--architecture-muted);
+  font-size: .76rem;
+}
+
+.architecture-edge-list {
+  display: grid;
+  gap: .35rem;
+}
+
+.architecture-edge-list li {
+  background: var(--architecture-surface-raised);
+  border: 1px solid var(--architecture-border);
+  border-radius: .3rem;
+  display: grid;
+  gap: .35rem .65rem;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) minmax(0, 1.1fr) minmax(4rem, auto);
+  min-width: 0;
+  padding: .4rem .5rem;
+}
+
+.architecture-edge-list .architecture-edge-type {
+  margin-right: 0;
+}
+
+.architecture-edge-list li > span,
+.architecture-edge-list li > strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.architecture-edge-list .architecture-edge-metric {
+  text-align: right;
+}
+
+.architecture-role-grid,
+.architecture-routing-grid,
+.architecture-advice-grid,
+.architecture-bottleneck-grid,
+.architecture-execution-summary {
+  display: grid;
+  gap: .75rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  margin-top: 1rem;
+}
+
+.architecture-role-card,
+.architecture-routing-card,
+.architecture-advice-card {
+  background: var(--architecture-surface-raised);
+  border: 1px solid var(--architecture-border);
+  color: var(--architecture-text);
+  min-width: 0;
+  border-radius: calc(var(--radius, 10px) - 3px);
+  padding: .75rem;
+}
+
+.architecture-role-card p,
+.architecture-routing-card p,
+.architecture-advice-card p,
+.architecture-evidence,
+.architecture-routing,
+.architecture-bottleneck-section,
+.architecture-execution-section {
+  color: var(--architecture-text);
+}
+
+.architecture-routing-card header {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.architecture-routing-card header h4 {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.architecture-definition-list,
+.architecture-bottleneck-grid {
+  display: grid;
+  gap: .35rem .75rem;
+  margin: .75rem 0 0;
+}
+
+.architecture-definition-list div,
+.execution-run-metrics div,
+.architecture-bottleneck-card {
+  display: flex;
+  min-width: 0;
+  justify-content: space-between;
+  gap: .75rem;
+}
+
+.architecture-definition-list dt,
+.execution-run-metrics dt,
+.architecture-bottleneck-card dt {
+  color: var(--architecture-text);
+}
+
+.architecture-definition-list dd,
+.execution-run-metrics dd,
+.architecture-bottleneck-card dd {
+  color: var(--architecture-text);
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.architecture-evidence,
+.architecture-routing,
+.architecture-execution-section {
+  margin-top: 1rem;
+}
+
+.architecture-evidence summary {
+  cursor: pointer;
+}
+
+.architecture-evidence li,
+.architecture-advice-evidence li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: .75rem;
+  min-width: 0;
+  padding: .25rem 0;
+}
+
+.architecture-route-list {
+  display: grid;
+  gap: .5rem;
+}
+
+.architecture-route-list li {
+  align-items: center;
+  display: grid;
+  font-size: .9rem;
+  gap: .5rem;
+  grid-template-columns: minmax(0, 1fr) minmax(3rem, 1fr) minmax(0, 1.2fr);
+  min-width: 0;
+}
+
+.architecture-route-list li > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.architecture-route-list progress {
+  accent-color: var(--architecture-accent);
+  height: .7rem;
+  min-width: 0;
+  width: 100%;
+}
+
+.architecture-route-list progress:indeterminate {
+  opacity: .55;
+}
+
+.architecture-routing-evidence {
+  border-top: 1px solid var(--architecture-border);
+  margin-top: .7rem;
+  padding-top: .55rem;
+}
+
+.architecture-routing-evidence summary {
+  color: var(--architecture-muted);
+  cursor: pointer;
+  font-size: .8rem;
+  font-weight: 650;
+}
+
+.architecture-routing-evidence ul {
+  color: var(--architecture-muted);
+  display: grid;
+  gap: .25rem;
+  list-style: none;
+  margin: .45rem 0 0;
+  padding: 0;
+}
+
+.architecture-routing-evidence li {
+  overflow-wrap: anywhere;
+}
+
+.architecture-approximate {
+  color: var(--architecture-text);
+  display: block;
+  font-size: .7rem;
+  font-weight: 400;
+}
+
+.architecture-advice-card[data-severity="error"] { border-left: 4px solid var(--architecture-danger); }
+.architecture-advice-card[data-severity="warning"] { border-left: 4px solid var(--architecture-warning); }
+.architecture-advice-card[data-severity="info"] { border-left: 4px solid var(--architecture-accent); }
+
+.architecture-advice-card header {
+  align-items: flex-start;
+}
+
+.architecture-severity {
+  border-radius: .25rem;
+  font-size: .7rem;
+  font-weight: 700;
+  letter-spacing: .04em;
+  padding: .2rem .35rem;
+  text-transform: uppercase;
+}
+
+.architecture-advice-card[data-severity="error"] .architecture-severity { color: var(--architecture-danger); }
+.architecture-advice-card[data-severity="warning"] .architecture-severity { color: var(--architecture-warning); }
+
+.architecture-advice-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem 1rem;
+}
+
+.architecture-critical-path {
+  margin-top: 1rem;
+}
+
+.architecture-critical-path em {
+  color: var(--architecture-text);
+}
+
+.architecture-execution-summary {
+  align-items: stretch;
+  grid-auto-rows: 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+}
+
+.architecture-execution-tree-panel {
+  background: var(--architecture-surface-raised);
+  border: 1px solid var(--architecture-border);
+  border-radius: calc(var(--radius, 10px) - 3px);
+  margin-top: .75rem;
+  padding: .75rem;
+}
+
+.architecture-execution-tree-panel .architecture-section-heading {
+  margin-bottom: .5rem;
+}
+
+.architecture-execution-tree {
+  border-left: 2px solid var(--architecture-border);
+  display: grid;
+  gap: .45rem;
+  list-style: none;
+  margin: .4rem 0 0;
+  padding: 0;
+}
+
+.architecture-execution-tree-row {
+  background: var(--architecture-surface);
+  border: 1px solid var(--architecture-border);
+  border-left: 3px solid var(--architecture-accent);
+  border-radius: .35rem;
+  display: grid;
+  gap: .15rem;
+  min-width: 0;
+  padding: .5rem .6rem;
+}
+
+.architecture-execution-tree-row.architecture-execution-depth-1 { margin-left: 1rem; }
+.architecture-execution-tree-row.architecture-execution-depth-2 { margin-left: 2rem; }
+.architecture-execution-tree-row.architecture-execution-depth-3 { margin-left: 3rem; }
+.architecture-execution-tree-row.architecture-execution-depth-4 { margin-left: 4rem; }
+.architecture-execution-tree-row.architecture-execution-depth-5 { margin-left: 5rem; }
+.architecture-execution-tree-row.architecture-execution-depth-6 { margin-left: 6rem; }
+
+.architecture-execution-tree-heading {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: .35rem .55rem;
+  min-width: 0;
+}
+
+.architecture-tree-branch {
+  color: var(--architecture-accent);
+  font-weight: 700;
+}
+
+.architecture-tree-model,
+.architecture-execution-tree-detail {
+  color: var(--architecture-muted);
+  font-size: .8rem;
+  overflow-wrap: anywhere;
+}
+
+.architecture-tree-value {
+  color: var(--architecture-accent);
+  margin-left: auto;
+}
+
+.architecture-table-scroll {
+  margin-top: 1rem;
+  overflow-x: auto;
+  width: 100%;
+}
+
+.architecture-execution-table {
+  border-collapse: collapse;
+  table-layout: fixed;
+  margin-top: 0;
+  min-width: 780px;
+  width: 100%;
+}
+
+.architecture-execution-table caption {
+  color: var(--architecture-muted);
+  margin-bottom: .5rem;
+  text-align: left;
+}
+
+.architecture-execution-table th,
+.architecture-execution-table td {
+  border-bottom: 1px solid var(--architecture-border);
+  min-width: 0;
+  overflow-wrap: anywhere;
+  padding: .45rem .5rem;
+  text-align: left;
+  vertical-align: top;
+  word-break: break-word;
+}
+
+.architecture-execution-table thead th {
+  color: var(--architecture-muted);
+  font-size: .8rem;
+}
+
+.architecture-execution-table tbody th {
+  color: var(--architecture-accent);
+  white-space: nowrap;
+}
+
+.architecture-execution-table td {
+  overflow-wrap: anywhere;
+}
+
+.architecture-execution-section {
+  overflow-x: hidden;
+}
+
+.architecture-summary-tile {
+  align-content: start;
+  background: var(--architecture-surface-raised);
+  border: 1px solid var(--architecture-border);
+  border-radius: .35rem;
+  box-sizing: border-box;
+  display: grid;
+  gap: .2rem;
+  grid-template-rows: auto 1fr;
+  min-height: 4.5rem;
+  padding: .65rem;
+}
+
+.architecture-summary-tile span {
+  color: var(--architecture-text);
+  font-size: .8rem;
+  overflow-wrap: anywhere;
+}
+
+.architecture-unavailable {
+  background: var(--architecture-surface-raised);
+  border: 1px solid var(--architecture-border);
+  border-left: 4px solid var(--architecture-warning);
+  border-radius: calc(var(--radius, 10px) - 3px);
+  display: grid;
+  gap: .25rem;
+  margin-top: 1rem;
+  padding: .75rem;
+}
+
+.architecture-unavailable span,
+.architecture-empty {
+  color: var(--architecture-muted);
+}
+
+.architecture-empty {
+  font-style: italic;
+}
+
+html[data-theme="dark"] .architecture-view { --architecture-warning: #f5bd52; }
+@media (prefers-color-scheme: dark) {
+  html[data-theme="system"] .architecture-view { --architecture-warning: #f5bd52; }
+}
+
+.sr-only {
+  border: 0;
+  clip: rect(0 0 0 0);
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  padding: 0;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .architecture-view *,
+  .architecture-view *::before,
+  .architecture-view *::after { scroll-behavior: auto; transition-duration: .01ms !important; }
+}
+
+@media (max-width: 850px) {
+  .architecture-header { align-items: flex-start; flex-direction: column; }
+  .architecture-topology-layers { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 520px) {
+  .architecture-topology-layers { grid-template-columns: 1fr; }
+  .architecture-section { padding: .75rem; }
+  .architecture-edge-list li { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); }
+  .architecture-edge-list .architecture-edge-source { grid-column: 1; }
+  .architecture-edge-list .architecture-edge-arrow { grid-column: 2; }
+  .architecture-edge-list .architecture-edge-target { grid-column: 3; }
+  .architecture-edge-list .architecture-edge-type { grid-column: 1 / span 2; }
+  .architecture-edge-list .architecture-edge-metric { grid-column: 3; }
+  .architecture-execution-table { font-size: .72rem; }
+  .architecture-route-list li { grid-template-columns: minmax(0, 1fr) minmax(3rem, .8fr); }
+  .architecture-route-list li > span:last-child { grid-column: 1 / -1; text-align: right; }
+  .architecture-topology-visual { overflow-x: auto; }
+  .architecture-topology-layer-labels { min-width: 620px; }
+  .architecture-execution-tree-row.architecture-execution-depth-4,
+  .architecture-execution-tree-row.architecture-execution-depth-5,
+  .architecture-execution-tree-row.architecture-execution-depth-6 { margin-left: 2rem; }
+  .architecture-tree-value { margin-left: 0; }
+}

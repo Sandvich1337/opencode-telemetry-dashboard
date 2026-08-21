@@ -5,6 +5,23 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { estimateMessageCost, PRICING_CATALOG } from "./pricing.mjs";
+import {
+  ANALYTICS_SCHEMA_VERSION,
+  makeAvailability,
+  normalizeSampleEvidence,
+} from "./analytics/contract.mjs";
+import {
+  analyzeArchitecture,
+  analyzeExecution,
+} from "./analytics/architecture.mjs";
+import { analyzeThroughput } from "./analytics/throughput.mjs";
+import { analyzeTrends } from "./analytics/trends.mjs";
+import { analyzeEfficiency } from "./analytics/efficiency.mjs";
+import { analyzeComparisons } from "./analytics/comparisons.mjs";
+import { analyzeFailures } from "./analytics/failures.mjs";
+import { buildAdvice } from "./analytics/advice.mjs";
+import { normalizeSnapshot, sanitizePublic } from "./analytics/snapshot.mjs";
+import { collectConfiguredEnvironmentSync, collectObservedEnvironment } from "./environment.mjs";
 
 const TABLE_SPECS = Object.freeze({
   session: {
@@ -992,6 +1009,7 @@ function buildToolUsage(
   sessionById,
   summaryTokens,
   summaryCacheWriteReporting,
+  onAllocation = null,
 ) {
   const rows = new Map();
   const byAgent = new Map();
@@ -1045,9 +1063,10 @@ function buildToolUsage(
       const fullEstimate = estimateMessageCost(model, tokens);
       const context = fullEstimate?.context;
       const baseAgent = fillIdentity(session, data).agent;
-      const addAllocation = (tool, value, agent = baseAgent) => {
+      const addAllocation = (tool, value, agent = baseAgent, part = null) => {
         addToolTokens(toolUsageRow(rows, tool), value, model, context);
         addAgentToolTokens(byAgent, agent, tool, value, model, context);
+        if (part && onAllocation) onAllocation(part, value, model, context);
       };
 
       if (!assistant) {
@@ -1073,7 +1092,7 @@ function buildToolUsage(
           for (let index = 0; index < group.tools.length; index += 1) {
             const part = group.tools[index];
             const agent = fillIdentity(session, data, part.data).agent;
-            addAllocation(toolName(part.data), shares[index], agent);
+            addAllocation(toolName(part.data), shares[index], agent, part);
           }
         }
       } else {
@@ -1082,7 +1101,7 @@ function buildToolUsage(
         for (let index = 0; index < tools.length; index += 1) {
           const part = tools[index];
           const agent = fillIdentity(session, data, part.data).agent;
-          addAllocation(toolName(part.data), shares[index], agent);
+          addAllocation(toolName(part.data), shares[index], agent, part);
         }
       }
     }
@@ -1318,9 +1337,367 @@ export function reviewerSummary(reviewers) {
   };
 }
 
+function hasReportedCost(data) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return false;
+  const direct = objectValue(data, ["cost", "totalCost"]);
+  if (finiteNumber(direct) !== null) return true;
+  const usage = objectValue(data, ["usage"]);
+  return usage && typeof usage === "object" && finiteNumber(objectValue(usage, ["cost", "totalCost"])) !== null;
+}
+
+function analyticsTokenSample(messages) {
+  const tokens = emptyTokens();
+  const reporting = emptyCacheWriteReporting();
+  for (const message of messages) {
+    const value = tokensFrom(message.data);
+    addTokens(tokens, value);
+    addCacheWriteReporting(reporting, value);
+  }
+  return {
+    ...tokens,
+    cacheWriteReported: reporting.observed > 0,
+    cacheWriteReporting: reporting,
+  };
+}
+
+function analyticsCost(messages, identity) {
+  const estimated = emptyEstimatedCost();
+  let reported = 0;
+  let reportedSamples = 0;
+  for (const message of messages) {
+    const data = message.data;
+    const tokens = tokensFrom(data);
+    if (hasReportedCost(data)) {
+      reported += costFrom(data);
+      reportedSamples += 1;
+    }
+    if (!tokens) continue;
+    const model = partialIdentity(data).model;
+    addEstimatedCost(estimated, data, model && model !== "unknown" ? model : identity.model);
+  }
+  if (reportedSamples > 0 && reported > 0) {
+    return {
+      usd: reported,
+      currency: "usd",
+      basis: "reported",
+      reported: true,
+    };
+  }
+  if (estimated.coverage.priced > 0) {
+    return {
+      usd: estimated.usd,
+      currency: "usd",
+      basis: "estimated",
+      reported: false,
+      components: { ...estimated.components },
+    };
+  }
+  if (reportedSamples > 0) {
+    return {
+      usd: reported,
+      currency: "usd",
+      basis: "reported",
+      reported: true,
+    };
+  }
+  return { usd: 0, currency: "usd", basis: "unavailable", reported: false };
+}
+
+function analyticsToolEvent(part, allocation) {
+  const start = rowStart(part);
+  const end = rowEnd(part);
+  const event = {
+    tool: toolName(part.data),
+    count: 1,
+    error: hasError(part.data),
+    ...(start !== null && end !== null && end >= start ? { interval: { start, end } } : {}),
+  };
+  if (!allocation) return event;
+  return {
+    ...event,
+    tokens: allocation.tokens,
+    cost: {
+      usd: allocation.usd,
+      currency: "usd",
+      basis: "estimated",
+      reported: false,
+      components: { ...allocation.components },
+    },
+  };
+}
+
+function analyticsSnapshot(sessions, messages, parts, range, scopeInfo, catalog, schema, allocationByPart = null) {
+  const selected = scopeInfo.apply && scopeInfo.selectedAlias
+    ? catalog.find(({ option }) => option.alias === scopeInfo.selectedAlias)?.session
+    : null;
+  const messagesBySession = new Map();
+  const partsBySession = new Map();
+  for (const message of messages) {
+    const id = String(message.sessionId ?? "");
+    if (!messagesBySession.has(id)) messagesBySession.set(id, []);
+    messagesBySession.get(id).push(message);
+  }
+  for (const part of parts) {
+    const id = String(part.sessionId ?? "");
+    if (!partsBySession.has(id)) partsBySession.set(id, []);
+    partsBySession.get(id).push(part);
+  }
+  const records = sessions.map((session) => {
+    const sessionMessages = messagesBySession.get(String(session.id)) ?? [];
+    const sessionParts = partsBySession.get(String(session.id)) ?? [];
+    const identity = primaryGroup(session, sessionMessages, sessionParts);
+    const errors = sessionParts.filter((part) => hasError(part.data)).map((part) => ({
+      kind: "error",
+      count: 1,
+      interval: { start: rowStart(part), end: rowEnd(part) },
+    }));
+    return {
+      id: session.id,
+      parentId: session.parentId,
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt,
+      identity,
+      tokens: analyticsTokenSample(sessionMessages),
+      cost: analyticsCost(sessionMessages, identity),
+      toolEvents: sessionParts.filter((part) => toolName(part.data) !== null)
+        .map((part) => analyticsToolEvent(part, allocationByPart?.get(part))),
+      errors,
+      reviewer: session.reviewer ?? null,
+    };
+  });
+  return normalizeSnapshot({
+    range: { from: range.from, to: range.to },
+    scope: {
+      kind: scopeInfo.mode,
+      sessionId: selected?.id ?? null,
+    },
+    provenance: {
+      range: {
+        available: range.from !== null || range.to !== null,
+        basis: "observed",
+        reason: "filtered",
+      },
+      scope: {
+        available: scopeInfo.apply,
+        basis: "observed",
+        reason: scopeInfo.apply ? (scopeInfo.found ? "filtered" : "not-found") : "all-sessions",
+      },
+      capabilities: schema.capabilities,
+    },
+    sessions: records,
+    runs: records.map((record) => ({
+      ...record,
+      id: `run:${record.id}`,
+      sessionId: record.id,
+    })),
+  });
+}
+
+function configuredEnvironmentOptions(options = {}) {
+  const inspectEnvironment = options.inspectEnvironment === true;
+  const includeEnvironment = options.includeEnvironment === true;
+  const supplied = options.environmentOptions ?? options.environment;
+  const source = supplied !== null && typeof supplied === "object" && !Array.isArray(supplied) ? supplied : {};
+  const allowlisted = {};
+  for (const key of ["candidates", "descriptors", "config"]) {
+    if (Object.prototype.hasOwnProperty.call(source, key)) allowlisted[key] = source[key];
+  }
+  return {
+    ...allowlisted,
+    enabled: inspectEnvironment && includeEnvironment,
+    disabledReason: !inspectEnvironment
+      ? "startup-opt-in-required"
+      : includeEnvironment ? undefined : "request-opt-in-required",
+  };
+}
+
+function decisionSupportPublic(value) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const list = (entry) => Array.isArray(entry) ? entry : [];
+  const evidence = (entry) => list(entry).map((item) => ({ summary: String(item ?? "") }));
+  const encoded = {
+    availability: source.availability,
+    sample: source.sample,
+    confidence: source.confidence,
+    principles: list(source.principles).map((row) => ({
+      code: row?.key,
+      label: row?.label,
+      score: row?.score,
+      summary: row?.conclusion,
+      reasoningValue: { title: row?.reasoning },
+      evidence: evidence(row?.evidence),
+      sample: row?.sample,
+      confidence: row?.confidence,
+    })),
+    conclusions: list(source.conclusions).map((row) => ({
+      code: row?.code,
+      severity: row?.severity,
+      title: row?.title,
+      evidence: evidence(row?.evidence),
+      sample: row?.sample,
+      confidence: row?.confidence,
+      reasoningValue: { title: row?.reasoning },
+      suggestionValue: { title: row?.suggestion },
+    })),
+    accessChannels: list(source.accessChannels).map((row) => ({
+      code: row?.key,
+      label: row?.label,
+      calls: row?.calls,
+      tools: list(row?.tools).map((tool) => ({
+        tool: tool?.tool,
+        calls: tool?.calls,
+        classification: tool?.classification,
+        providerValue: { label: tool?.provider },
+      })),
+      evidence: evidence(row?.evidence),
+    })),
+  };
+  const safe = sanitizePublic(encoded) ?? {};
+  const safeEvidence = (entry) => list(entry).map((item) => item?.summary).filter((item) => typeof item === "string");
+  return {
+    availability: safe.availability ?? source.availability,
+    sample: safe.sample ?? source.sample,
+    confidence: safe.confidence ?? source.confidence,
+    principles: list(safe.principles).map((row) => ({
+      key: row.code ?? "unknown",
+      label: row.label ?? "unknown",
+      score: row.score === null || typeof row.score === "number" ? row.score : null,
+      conclusion: row.summary ?? "unknown",
+      reasoning: row.reasoningValue?.title ?? "No contribution reasoning reported.",
+      evidence: safeEvidence(row.evidence),
+      sample: row.sample ?? { count: 0, observed: 0, denominator: null, complete: null },
+      confidence: row.confidence ?? { value: null, basis: "unknown", reason: "unknown", sample: { count: 0, observed: 0, denominator: null, complete: null } },
+    })),
+    conclusions: list(safe.conclusions).map((row) => ({
+      code: row.code ?? "unknown",
+      severity: row.severity ?? "info",
+      title: row.title ?? "unknown",
+      evidence: safeEvidence(row.evidence),
+      sample: row.sample ?? { count: 0, observed: 0, denominator: null, complete: null },
+      confidence: row.confidence ?? { value: null, basis: "unknown", reason: "unknown", sample: { count: 0, observed: 0, denominator: null, complete: null } },
+      reasoning: row.reasoningValue?.title ?? "No contribution reasoning reported.",
+      suggestion: row.suggestionValue?.title ?? "unknown",
+    })),
+    accessChannels: list(safe.accessChannels).map((row) => ({
+      key: row.code ?? "unknown",
+      label: row.label ?? "unknown",
+      calls: typeof row.calls === "number" ? row.calls : 0,
+      tools: list(row.tools).map((tool) => ({
+        tool: tool.tool ?? "unknown",
+        calls: typeof tool.calls === "number" ? tool.calls : 0,
+        classification: tool.classification ?? "unknown",
+        provider: tool.providerValue?.label ?? "unknown",
+      })),
+      evidence: safeEvidence(row.evidence),
+    })),
+  };
+}
+
+function buildAnalytics(snapshot, options, schema) {
+  const architecture = analyzeArchitecture(snapshot);
+  const execution = analyzeExecution(snapshot);
+  const throughput = analyzeThroughput(snapshot);
+  const efficiency = analyzeEfficiency(snapshot);
+  const comparisons = analyzeComparisons(snapshot);
+  const failures = analyzeFailures(snapshot);
+  const trends = analyzeTrends(snapshot, null);
+  const environment = {
+    observed: collectObservedEnvironment(snapshot),
+    configured: collectConfiguredEnvironmentSync(configuredEnvironmentOptions(options)),
+  };
+  const advice = buildAdvice(snapshot, { architecture, execution, throughput, efficiency });
+  const reviewerRuns = snapshot.runs.filter((run) => {
+    const reviewer = run?.reviewer;
+    return reviewer?.agent && reviewer.agent !== "unknown" && (reviewer.verdict === "PASS" || reviewer.verdict === "ISSUE");
+  }).length;
+  const reviewerSample = normalizeSampleEvidence({
+    count: snapshot.runs.length,
+    observed: reviewerRuns,
+    denominator: snapshot.runs.length,
+  });
+  const reviewerAttribution = makeAvailability(reviewerRuns > 0, {
+    basis: reviewerRuns > 0 ? "observed" : "unavailable",
+    reason: reviewerRuns > 0
+      ? "reviewer-attribution"
+      : snapshot.runs.length > 0 ? "reviewer-attribution-missing" : "no-runs",
+    sample: reviewerSample,
+  });
+  const architectureForPublic = {
+    ...architecture,
+    roles: Array.isArray(architecture.roles) ? architecture.roles.map((role) => ({
+      ...role,
+      reasoningValue: { title: role?.reasoning },
+    })) : architecture.roles,
+  };
+  const executionForPublic = {
+    ...execution,
+    runs: Array.isArray(execution.runs) ? execution.runs.map((run) => ({
+      ...run,
+      costBasisValue: { title: run?.costBasis },
+    })) : execution.runs,
+  };
+  const adviceForPublic = {
+    ...advice,
+    items: Array.isArray(advice.items) ? advice.items.map((item) => ({
+      ...item,
+      reasoningValue: { title: item?.reasoning },
+    })) : advice.items,
+  };
+  const publicValue = sanitizePublic({
+    schemaVersion: ANALYTICS_SCHEMA_VERSION,
+    availability: {
+      architecture: architecture.availability,
+      throughput: throughput.availability,
+      reviewerAttribution,
+      configuredEnvironment: environment.configured.availability,
+    },
+    throughput,
+     architecture: architectureForPublic,
+     execution: executionForPublic,
+    efficiency,
+    comparisons,
+    failures,
+    trends,
+    environment,
+     advice: adviceForPublic,
+  });
+  const publicAdvice = publicValue.advice ?? {};
+  publicValue.advice = {
+    availability: publicAdvice.availability,
+    sample: publicAdvice.sample,
+    confidence: publicAdvice.confidence,
+    provenance: publicAdvice.provenance,
+    items: Array.isArray(publicAdvice.items) ? publicAdvice.items.map((item) => {
+      const { reasoningValue, ...safeItem } = item ?? {};
+      return { ...safeItem, reasoning: reasoningValue?.title ?? "No contribution reasoning reported." };
+    }) : publicAdvice.items,
+    decisionSupport: decisionSupportPublic(advice.decisionSupport),
+    summary: publicAdvice.summary,
+  };
+  if (publicValue.architecture && Array.isArray(publicValue.architecture.roles)) {
+    publicValue.architecture.roles = publicValue.architecture.roles.map((role) => {
+      const { reasoningValue, ...safeRole } = role ?? {};
+      return { ...safeRole, reasoning: reasoningValue?.title ?? "No role reasoning reported." };
+    });
+  }
+  if (publicValue.execution && Array.isArray(publicValue.execution.runs)) {
+    publicValue.execution.runs = publicValue.execution.runs.map((run) => {
+      const { costBasisValue, ...safeRun } = run ?? {};
+      return { ...safeRun, costBasis: costBasisValue?.title ?? "unavailable" };
+    });
+  }
+  return publicValue;
+}
+
 function zeroResult(schema, range, options = {}) {
   const hasSelection = options.session !== undefined && options.session !== null && String(options.session) !== "";
   const summary = emptySummary();
+  const snapshot = analyticsSnapshot([], [], [], range, {
+    apply: hasSelection,
+    mode: hasSelection ? "session" : "all",
+    selectedAlias: null,
+    found: !hasSelection,
+  }, [], schema);
   return {
     schema: publicSchema(schema),
     range,
@@ -1337,6 +1714,7 @@ function zeroResult(schema, range, options = {}) {
     groups: [],
     toolUsage: emptyToolUsage(),
     reviewerSummary: reviewerSummary([]),
+    analytics: buildAnalytics(snapshot, options, schema),
     privacy: {
       aggregateOnly: true,
       rawText: false,
@@ -1431,12 +1809,48 @@ export function aggregateRows(rows, options = {}, schema = {
     range,
     scopeInfo.apply ? scopeInfo.ids : null,
   );
+  const allocationByPart = new WeakMap();
+  const recordAllocation = (part, value, model, context) => {
+    let allocation = allocationByPart.get(part);
+    if (!allocation) {
+      allocation = {
+        tokens: { ...emptyTokenBuckets(), total: 0, cacheWriteReported: false, cacheWriteReporting: emptyCacheWriteReporting() },
+        usd: 0,
+        components: { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 },
+      };
+      allocationByPart.set(part, allocation);
+    }
+    for (const key of TOKEN_BUCKETS) allocation.tokens[key] += value?.[key] ?? 0;
+    allocation.tokens.total = TOKEN_BUCKETS.reduce((sum, key) => sum + allocation.tokens[key], 0);
+    allocation.tokens.cacheWriteReporting.samples += 1;
+    if (value?.cacheWriteReported) {
+      allocation.tokens.cacheWriteReported = true;
+      allocation.tokens.cacheWriteReporting.observed += 1;
+    }
+    const estimate = estimateMessageCost(model, value, { context });
+    if (!estimate) return;
+    allocation.usd += estimate.usd;
+    for (const key of Object.keys(allocation.components)) allocation.components[key] += estimate.components[key];
+  };
   const toolUsage = buildToolUsage(
     activeMessagesBySession,
     activePartsBySession,
     sessionById,
     summary.tokens,
     summary.cacheWriteReporting,
+    recordAllocation,
+  );
+  const analyticsMessages = [...activeMessagesBySession.values()].flat();
+  const analyticsParts = [...activePartsBySession.values()].flat();
+  const snapshot = analyticsSnapshot(
+    includedSessions,
+    analyticsMessages,
+    analyticsParts,
+    range,
+    scopeInfo,
+    catalog,
+    schema,
+    allocationByPart,
   );
   return {
     schema: publicSchema(schema),
@@ -1454,6 +1868,7 @@ export function aggregateRows(rows, options = {}, schema = {
     pricing: publicPricing(summary.estimatedCost),
     toolUsage,
     reviewerSummary: reviewerSummary(reviewerAttributions),
+    analytics: buildAnalytics(snapshot, options, schema),
     privacy: {
       aggregateOnly: true,
       rawText: false,

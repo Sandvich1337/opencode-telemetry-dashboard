@@ -349,6 +349,30 @@ test("publishes the official pricing source", () => {
   assert.equal(PRICING_CATALOG.source, "https://platform.openai.com/docs/pricing");
 });
 
+test("publishes reported and catalog-estimated run cost with an explicit basis", () => {
+  const reported = aggregateRows({
+    sessions: [{ id: "reported", agent: "sol-build", model: "gpt-5.6-sol", createdAt: 1, updatedAt: 2 }],
+    messages: [{ id: "reported-message", sessionId: "reported", data: { tokens: { input: 10 }, cost: 3.5 } }],
+    parts: [],
+  });
+  const estimated = aggregateRows({
+    sessions: [{ id: "estimated", agent: "luna-worker", model: "gpt-5.6-luna", createdAt: 1, updatedAt: 2 }],
+    messages: [{ id: "estimated-message", sessionId: "estimated", data: { tokens: { input: 10 } } }],
+    parts: [],
+  });
+  const zeroReported = aggregateRows({
+    sessions: [{ id: "zero-reported", agent: "luna-worker", model: "gpt-5.6-luna", createdAt: 1, updatedAt: 2 }],
+    messages: [{ id: "zero-message", sessionId: "zero-reported", data: { tokens: { input: 10 }, cost: 0 } }],
+    parts: [],
+  });
+  assert.equal(reported.analytics.execution.runs[0].costBasis, "reported");
+  assert.equal(estimated.analytics.execution.runs[0].costBasis, "estimated");
+  assert.equal(estimated.analytics.execution.runs[0].estimatedUsd > 0, true);
+  assert.equal(zeroReported.analytics.execution.runs[0].costBasis, "estimated");
+  assert.equal(zeroReported.analytics.execution.runs[0].estimatedUsd > 0, true);
+  assert.equal(estimated.analytics.advice.decisionSupport.principles.find((row) => row.key === "cost").reasoning.includes("catalog-estimated"), false);
+});
+
 test("allocates ordered tool steps with exact bucket and cost conservation", () => {
   const metrics = aggregateRows(makeToolUsageFixture());
   const usage = metrics.toolUsage;
@@ -417,6 +441,53 @@ test("allocates ordered tool steps with exact bucket and cost conservation", () 
   const allocatedCost = usage.rows.reduce((sum, row) => sum + row.estimatedUSD, 0);
   assert.ok(Math.abs(allocatedCost - metrics.summary.estimatedCost.usd) < 1e-12);
   assert.deepEqual(metrics.summary.estimatedCost.coverage, { priced: 4, unpriced: 0 });
+});
+
+test("attributes analytics to one message sample without duplicating step events", () => {
+  const metrics = aggregateRows(makeToolUsageFixture());
+  const execution = metrics.analytics.execution;
+  const run = execution.runs[0];
+  assert.equal(execution.runs.length, 1);
+  assert.equal(run.tokens, 71);
+  assert.equal(run.model, "provider/gpt-5.6-luna");
+  assert.deepEqual(run.tokenBuckets, {
+    input: 28,
+    output: 18,
+    reasoning: 10,
+    cacheRead: 10,
+    cacheWrite: 5,
+    total: 71,
+  });
+  assert.equal(metrics.analytics.efficiency.tokens.total, 71);
+  assert.equal(metrics.analytics.efficiency.cost.estimatedUSD > 0, true);
+  assert.equal(metrics.analytics.efficiency.estimatedCacheSavings.available, true);
+  assert.deepEqual(metrics.analytics.advice.decisionSupport.principles.map((row) => row.key), ["intelligence", "cost", "speed"]);
+  assert.equal(metrics.analytics.advice.decisionSupport.principles.find((row) => row.key === "cost").score, null);
+  for (const row of metrics.analytics.advice.decisionSupport.principles) {
+    assert.deepEqual(Object.keys(row), ["key", "label", "score", "conclusion", "reasoning", "evidence", "sample", "confidence"]);
+    assert.ok(row.evidence.length > 0);
+    assert.ok(row.reasoning.length < 160);
+  }
+  assert.ok(metrics.analytics.advice.decisionSupport.conclusions.every((row) => row.reasoning.length < 160 && !row.reasoning.includes("…") && !/^Because .*?,/i.test(row.reasoning)));
+  assert.ok(metrics.analytics.advice.items.every((item) => item.reasoning.length < 160 && !item.reasoning.includes("…")));
+  assert.ok(metrics.analytics.architecture.roles.every((role) => role.reasoning.length < 160));
+
+  const toolNodes = metrics.analytics.architecture.nodes.filter((node) => node.type === "tool");
+  const toolEdges = metrics.analytics.architecture.edges.filter((edge) => edge.type === "calls-tool");
+  const agentNode = metrics.analytics.architecture.nodes.find((node) => node.type === "agent");
+  const modelNode = metrics.analytics.architecture.nodes.find((node) => node.type === "model");
+  assert.equal(agentNode.tokens, 71);
+  assert.equal(modelNode.tokens, 71);
+  assert.equal(metrics.analytics.architecture.nodes.some((node) => node.type === "run"), false);
+  assert.equal(toolEdges.reduce((sum, edge) => sum + edge.weight.calls, 0), 8);
+  assert.equal(toolNodes.reduce((sum, node) => sum + node.calls, 0), 8);
+  assert.equal(toolNodes.reduce((sum, node) => sum + node.tokens, 0) > 0, true);
+  assert.equal(toolNodes.reduce((sum, node) => sum + node.estimatedUsd, 0) > 0, true);
+  const nodeIds = new Set(metrics.analytics.architecture.nodes.map((node) => node.id));
+  for (const edge of metrics.analytics.architecture.edges) {
+    assert.equal(nodeIds.has(edge.source), true);
+    assert.equal(nodeIds.has(edge.target), true);
+  }
 });
 
 test("scopes roots to descendants and child sessions exactly without leaking identifiers", () => {
@@ -596,4 +667,106 @@ test("conserves tool tokens by agent with session-message-part identity fallback
   const sessionAgent = usage.byAgent.find((block) => block.agent === "session-agent");
   assert.equal(partAgent.totals.input, 10);
   assert.equal(sessionAgent.totals.input, 8);
+});
+
+test("orchestrates one filtered analytics snapshot with deterministic privacy-safe output", () => {
+  const sessions = [
+    { id: "PRIVATE-ROOT-SESSION-ID", parentId: null, createdAt: 0, updatedAt: 100, agent: "orchestrator", model: "root-model" },
+    { id: "PRIVATE-WORKER-SESSION-ID", parentId: "PRIVATE-ROOT-SESSION-ID", createdAt: 10, updatedAt: 60, agent: "worker", model: "worker-model" },
+    { id: "PRIVATE-REVIEW-SESSION-ID", parentId: "PRIVATE-ROOT-SESSION-ID", createdAt: 20, updatedAt: 50, agent: "reviewer", model: "review-model", reviewer: { agent: "reviewer", verdict: "PASS" } },
+    { id: "PRIVATE-ZERO-SESSION-ID", parentId: null, createdAt: 70, updatedAt: 70, agent: "zero-duration", model: "zero-model" },
+  ];
+  const messages = sessions.map((session, index) => ({
+    id: `PRIVATE-MESSAGE-${index}`,
+    sessionId: session.id,
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
+    data: {
+      role: "assistant",
+      model: { providerID: "provider", modelID: session.model },
+      tokens: { input: index + 1, output: 2, reasoning: 1 },
+      text: "SECRET PAYLOAD MUST NOT LEAK",
+    },
+  }));
+  const parts = [
+    { id: "PRIVATE-PART-TASK", sessionId: sessions[0].id, messageId: messages[0].id, createdAt: 10, updatedAt: 20, data: { type: "tool", tool: "task", state: { status: "completed" } } },
+    { id: "PRIVATE-PART-READ", sessionId: sessions[1].id, messageId: messages[1].id, createdAt: 20, updatedAt: 30, data: { type: "tool", tool: "read", state: { status: "completed" } } },
+    { id: "PRIVATE-PART-ERROR", sessionId: sessions[2].id, messageId: messages[2].id, createdAt: 30, updatedAt: 40, data: { type: "tool", tool: "shell", state: { status: "error", output: "SECRET COMMAND RESULT" } } },
+  ];
+  const options = {
+    from: 0,
+    to: 100,
+    inspectEnvironment: true,
+    includeEnvironment: true,
+    environmentOptions: {
+      candidates: [
+        { type: "agent", name: "configured-agent", version: "v1.0.0", metadata: { token: "SECRET" } },
+        { type: "model", name: "configured-model", version: "2026.08" },
+      ],
+    },
+  };
+  const first = aggregateRows({ sessions, messages, parts }, options);
+  const second = aggregateRows({ sessions: [...sessions].reverse(), messages: [...messages].reverse(), parts: [...parts].reverse() }, options);
+
+  assert.deepEqual(first.analytics, second.analytics);
+  assert.deepEqual(Object.keys(first.analytics), [
+    "schemaVersion", "availability", "throughput", "architecture", "execution", "efficiency",
+    "comparisons", "failures", "trends", "environment", "advice",
+  ]);
+  assert.equal(first.analytics.schemaVersion, 1);
+  assert.deepEqual(Object.keys(first.analytics.availability), [
+    "architecture", "throughput", "reviewerAttribution", "configuredEnvironment",
+  ]);
+  assert.equal(first.analytics.availability.architecture.available, true);
+  assert.equal(first.analytics.availability.throughput.available, true);
+  assert.equal(first.analytics.availability.reviewerAttribution.available, true);
+  assert.equal(first.analytics.availability.configuredEnvironment.available, true);
+  assert.equal(first.analytics.execution.runs.length, 4);
+  assert.equal(first.analytics.architecture.delegation.delegations, 2);
+  assert.ok(first.analytics.throughput.basis.parallelism > 1);
+  assert.deepEqual(first.analytics.comparisons.byModel.map(({ model }) => model), ["review-model", "root-model", "worker-model", "zero-model"]);
+  assert.deepEqual(first.analytics.failures.totals.errors, 1);
+  assert.ok(first.analytics.architecture.roles.some(({ agent, confidence }) => agent === "reviewer" && confidence.value !== null));
+  assert.equal(first.analytics.trends.availability.available, false);
+  assert.equal(first.analytics.trends.availability.reason, "previous-unavailable");
+  assert.equal(first.analytics.advice.items.some(({ code }) => code.startsWith("delegation-")), false);
+  assert.deepEqual(first.analytics.environment.configured.agents.map(({ name }) => name), ["configured-agent"]);
+  const requestGated = aggregateRows({ sessions, messages, parts }, { ...options, includeEnvironment: false });
+  assert.equal(requestGated.analytics.availability.configuredEnvironment.available, false);
+  assert.equal(requestGated.analytics.availability.configuredEnvironment.reason, "request-opt-in-required");
+  const startupGated = aggregateRows({ sessions, messages, parts }, { ...options, inspectEnvironment: false });
+  assert.equal(startupGated.analytics.availability.configuredEnvironment.available, false);
+  assert.equal(startupGated.analytics.availability.configuredEnvironment.reason, "startup-opt-in-required");
+  for (const forbidden of ["PRIVATE-ROOT-SESSION-ID", "PRIVATE-MESSAGE-0", "PRIVATE-PART-TASK", "SECRET PAYLOAD", "SECRET COMMAND RESULT"]) {
+    assert.equal(JSON.stringify(first.analytics).includes(forbidden), false, `leaked ${forbidden}`);
+  }
+
+  const zero = aggregateRows({ sessions: [], messages: [], parts: [] });
+  assert.equal(zero.analytics.schemaVersion, 1);
+  assert.deepEqual(Object.keys(zero.analytics.availability), [
+    "architecture", "throughput", "reviewerAttribution", "configuredEnvironment",
+  ]);
+  for (const value of Object.values(zero.analytics.availability)) assert.equal(value.available, false);
+  assert.equal(zero.analytics.throughput.totals.rates.processedTokensPerMinute, null);
+  assert.equal(zero.analytics.throughput.rateReasons.processedTokensPerMinute, "no-positive-denominator");
+  assert.equal(zero.analytics.environment.configured.availability.reason, "startup-opt-in-required");
+});
+
+test("extends zero and capability responses with unavailable analytics", () => {
+  const db = new DatabaseSync(":memory:");
+  try {
+    const result = computeMetrics(db, { session: "missing-session" });
+    assert.equal(result.schema.ok, false);
+    assert.equal(result.analytics.schemaVersion, 1);
+    for (const value of Object.values(result.analytics.availability)) assert.equal(value.available, false);
+    assert.equal(result.analytics.availability.architecture.reason, "no-runs");
+    assert.equal(result.analytics.throughput.availability.available, false);
+    assert.equal(result.analytics.environment.observed.available, true);
+    assert.ok(result.analytics.environment.observed.capabilities.length > 0);
+    assert.equal(result.analytics.environment.configured.availability.available, false);
+    assert.equal(result.analytics.advice.availability.available, false);
+    assert.ok(result.analytics.advice.items.some(({ code }) => code === "capability-unavailable"));
+  } finally {
+    db.close();
+  }
 });
