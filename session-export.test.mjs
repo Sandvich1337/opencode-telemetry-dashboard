@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
+import { createRequire, syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -163,6 +164,47 @@ test("fails closed for a part whose direct session and message point across tree
     assert.throws(() => buildSessionExport(db, sessionAlias("root")), /cross-tree part relation/);
   } finally {
     db.close();
+    rmSync(created.directory, { recursive: true, force: true });
+  }
+});
+
+test("fails closed for two distinct sessions with one public alias", () => {
+  const created = fixture();
+  const writer = new DatabaseSync(created.path);
+  writer.prepare("INSERT INTO session VALUES (?, ?, ?, ?, ?, ?)").run("alias-collision-a", null, 10, 11, "Collision A", null);
+  writer.prepare("INSERT INTO session VALUES (?, ?, ?, ?, ?, ?)").run("alias-collision-b", null, 12, 13, "Collision B", null);
+  writer.close();
+
+  const require = createRequire(import.meta.url);
+  const crypto = require("node:crypto");
+  const originalCreateHash = crypto.createHash;
+  const collisionDigest = `${"0123456789abcdef"}${"0".repeat(48)}`;
+  crypto.createHash = (algorithm, options) => {
+    const hash = originalCreateHash(algorithm, options);
+    let input = "";
+    return {
+      update(value, ...args) {
+        input += String(value);
+        hash.update(value, ...args);
+        return this;
+      },
+      digest(...args) {
+        if (algorithm === "sha256" && args[0] === "hex" && ["alias-collision-a", "alias-collision-b"].includes(input)) return collisionDigest;
+        return hash.digest(...args);
+      },
+    };
+  };
+  syncBuiltinESMExports();
+
+  const db = new DatabaseSync(created.path, { readOnly: true });
+  try {
+    assert.throws(() => buildSessionExport(db, "0123456789abcdef"), /ambiguous session alias/);
+    assert.doesNotThrow(() => db.exec("BEGIN"));
+    db.exec("ROLLBACK");
+  } finally {
+    db.close();
+    crypto.createHash = originalCreateHash;
+    syncBuiltinESMExports();
     rmSync(created.directory, { recursive: true, force: true });
   }
 });
