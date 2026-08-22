@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { parseArgs, requestOptions, startDashboardServer } from "./server.mjs";
+import { sessionAlias } from "./metrics.mjs";
 
 function requestHttp(port, pathname, { method = "GET", headers = {} } = {}) {
   return new Promise((resolve, reject) => {
@@ -287,4 +288,43 @@ test("invalidates cached metrics after writer insert, update, and delete", async
   const deleted = await readMetrics();
   assert.notEqual(deleted.dataVersion, updated.dataVersion);
   assert.notEqual(deleted.generatedAt, updated.generatedAt);
+});
+
+test("requires the exact export header and serves a read-only deterministic snapshot", async (t) => {
+  const { directory, dbPath } = await createDatabase(`
+    CREATE TABLE session (id TEXT PRIMARY KEY, parent_id TEXT, time_created INTEGER, time_updated INTEGER, agent TEXT, model TEXT);
+    CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT);
+    CREATE TABLE part (id TEXT PRIMARY KEY, session_id TEXT, message_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT);
+    INSERT INTO session VALUES ('server-root', NULL, 1, 2, 'agent', 'model');
+    INSERT INTO session VALUES ('server-child', 'server-root', 2, 3, 'child', 'model');
+    INSERT INTO message VALUES ('server-message', 'server-root', 2, 3, '{"role":"user","text":"raw"}');
+    INSERT INTO part VALUES ('server-part', 'server-root', 'server-message', 3, 4, '{"type":"tool","tool":"read"}');
+  `);
+  const writer = new DatabaseSync(dbPath);
+  const started = await startDashboardServer({ port: 0, dbPath });
+  t.after(async () => {
+    await closeServer(started.server);
+    writer.close();
+    await rm(directory, { recursive: true, force: true });
+  });
+  const alias = sessionAlias("server-root");
+  const beforeVersion = writer.prepare("PRAGMA data_version").get().data_version;
+  const beforeSchema = writer.prepare("SELECT sql FROM sqlite_master WHERE type='table' ORDER BY name").all();
+  const denied = await get(started.port, `/api/session-export?root=${alias}`);
+  assert.equal(denied.response.statusCode, 403);
+  assert.deepEqual(JSON.parse(denied.body), { error: "Export confirmation required" });
+  const crossOrigin = await get(started.port, `/api/session-export?root=${alias}`, {
+    "X-OpenCode-Export": "session-contents-v1",
+    origin: "http://localhost:9999",
+  });
+  assert.equal(crossOrigin.response.statusCode, 403);
+  const exported = await get(started.port, `/api/session-export?root=${alias}`, { "X-OpenCode-Export": "session-contents-v1" });
+  assert.equal(exported.response.statusCode, 200);
+  assert.equal(exported.response.headers["cache-control"], "no-store");
+  const model = JSON.parse(exported.body);
+  assert.equal(model.bundleSchemaVersion, 1);
+  assert.equal(model.files.length, 7);
+  assert.equal(JSON.parse(model.files[0].content).coverage.mode, "snapshot-only");
+  assert.equal(writer.prepare("PRAGMA data_version").get().data_version, beforeVersion);
+  assert.deepEqual(writer.prepare("SELECT sql FROM sqlite_master WHERE type='table' ORDER BY name").all(), beforeSchema);
 });

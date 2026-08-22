@@ -1,5 +1,6 @@
 import { display, firstDefined, formatDateTime, fmt, objectOrEmpty } from "./core/format.mjs";
 import { downloadText } from "./core/export.mjs";
+import { downloadSessionExport, fetchSessionExport } from "./core/session-export.mjs";
 import { createRenderers } from "./core/renderers.mjs";
 import { createDashboardState } from "./core/state.mjs";
 import { createViewRegistry } from "./core/views.mjs";
@@ -45,6 +46,7 @@ let nextRefreshAt = null;
 let currentSessionOptions = [];
 let activeView = "overview";
 let architectureMetric = "calls";
+let exportInFlight = false;
 
 const VIEW_LABELS = Object.freeze({
   overview: "Overview",
@@ -414,6 +416,49 @@ function hasCurrentPayload() {
   return payload !== null && typeof payload === "object" && !Array.isArray(payload) && Object.keys(payload).length > 0;
 }
 
+function selectedExportRoot() {
+  const value = byId("session")?.value || "";
+  const selected = currentSessionOptions.find((option) => option?.alias === value && option?.kind === "root");
+  return selected && /^[0-9a-f]{16}$/.test(value) ? value : "";
+}
+
+function updateExportControl(kind = "ready", detail = "") {
+  const button = byId("sessionExport");
+  const status = byId("sessionExportStatus");
+  if (!button) return;
+  const root = selectedExportRoot();
+  button.disabled = exportInFlight || !root;
+  button.setAttribute("aria-busy", exportInFlight ? "true" : "false");
+  if (!status) return;
+  status.className = `export-status ${kind}`;
+  status.textContent = detail || (root ? "Explicit confirmation required." : "Select one root session to export.");
+}
+
+async function exportSelectedSession() {
+  if (exportInFlight) return;
+  const root = selectedExportRoot();
+  if (!root) return updateExportControl("error", "Select one root session before exporting.");
+  const confirmed = typeof window.confirm === "function" && window.confirm(
+    "Export this unredacted session archive? It may contain prompts, responses, identifiers, paths, tool inputs/outputs, and secrets.",
+  );
+  if (!confirmed) return updateExportControl("ready");
+  exportInFlight = true;
+  updateExportControl("pending", "Preparing the unredacted session archive…");
+  let result = "ready";
+  try {
+    const validated = await fetchSessionExport(root);
+    await downloadSessionExport(validated);
+    result = "success";
+    updateExportControl(result, "Session archive downloaded.");
+  } catch {
+    result = "error";
+    updateExportControl(result, "Session export unavailable.");
+  } finally {
+    exportInFlight = false;
+    updateExportControl(result, result === "success" ? "Session archive downloaded." : result === "error" ? "Session export unavailable." : "Explicit confirmation required.");
+  }
+}
+
 const viewActions = {
   setArchitectureMetric(metric) {
     architectureMetric = String(metric || "calls");
@@ -579,6 +624,7 @@ export function load(range = dashboardState.snapshot.range, queueIfBusy = false)
       currentSessionOptions = Array.isArray(payload.sessionOptions) ? payload.sessionOptions : [];
       renderers.renderSessionOptions(currentSessionOptions, requested.sessionScope);
       renderers.renderTopology(currentSessionOptions, requested.sessionScope);
+      updateExportControl();
       renderers.clearTableModels();
       renderers.renderCards(payload.summary);
       renderers.renderGroups(payload.groups);
@@ -646,8 +692,11 @@ byId("session").addEventListener("change", () => {
   dashboardState.setSessionScope(byId("session").value || "");
   renderers.renderSessionOptions(currentSessionOptions, dashboardState.snapshot.sessionScope);
   renderers.renderTopology(currentSessionOptions, dashboardState.snapshot.sessionScope);
+  updateExportControl();
   load(dashboardState.snapshot.range, true);
 });
+
+byId("sessionExport")?.addEventListener?.("click", exportSelectedSession);
 
 byId("showSessionTitles").addEventListener("change", () => {
   dashboardState.setTitleOptIn(byId("showSessionTitles").checked);
@@ -674,5 +723,6 @@ document.addEventListener("visibilitychange", () => {
   if (!document.hidden && (queuedReload || !lastCheckedAt || Date.now() - lastCheckedAt >= REFRESH_MS)) load(dashboardState.snapshot.range, true);
 });
 window.setInterval(updateRefreshCountdown, 1000);
+updateExportControl();
 activateView("overview");
 load(dashboardState.snapshot.range);

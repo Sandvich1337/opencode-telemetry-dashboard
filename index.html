@@ -96,6 +96,8 @@
             <div class="toolbar-row filters" aria-label="Metric filters">
               <label class="field-label" for="session">Root session</label>
               <select id="session"><option value="">All sessions</option></select>
+              <button id="sessionExport" class="button-secondary" type="button" disabled aria-busy="false" aria-describedby="sessionExportStatus">Export session contents</button>
+              <span id="sessionExportStatus" class="export-status" role="status" aria-live="polite">Select one root session to export.</span>
               <label class="title-toggle" for="showSessionTitles"><input id="showSessionTitles" type="checkbox" aria-label="Show root session titles"><span>Show root titles</span></label>
               <span class="toolbar-spacer"></span>
               <button id="refresh" class="button-primary" type="button"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20 11a8 8 0 1 0 1 4" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.8"/><path d="M20 5v6h-6" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"/></svg>Refresh</button>

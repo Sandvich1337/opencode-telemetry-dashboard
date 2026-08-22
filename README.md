@@ -39,6 +39,16 @@ period with the same session and privacy options. Throughput comparisons show
 the denominator and sample evidence; unavailable analytics remain explicitly
 unavailable rather than becoming zero.
 
+The **Export session contents** control is separate from the aggregate dashboard.
+It is enabled only for one selected root and requires an explicit confirmation
+that the resulting unredacted, raw SQLite snapshot may contain prompts,
+responses, identifiers, paths, tool inputs/outputs, and secrets. The archive is
+snapshot-only: it does not claim live telemetry, retries, causation, or
+unpersisted runtime events. Normal pages continue to hide raw content and
+existing aggregate downloads do not include it. Archives are generated in the
+browser with deterministic JSON and an uncompressed ZIP; users are responsible
+for deleting any downloaded copies.
+
 Navigation and time-range controls are keyboard accessible and remain usable at
 narrow widths; changing a filter keeps the latest request authoritative. The
 configured-inventory opt-in is withdrawn from the visible view immediately,

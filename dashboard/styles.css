@@ -250,6 +250,12 @@ button:hover { border-color: var(--input); background: var(--muted); }
 .button-primary { align-items: center; background: var(--primary); border-color: var(--primary); color: var(--primary-foreground); display: inline-flex; gap: .4rem; font-weight: 600; }
 .button-primary:hover { background: var(--foreground); border-color: var(--foreground); color: var(--background); }
 .button-primary svg { height: .9rem; width: .9rem; }
+.button-secondary { background: var(--secondary); border-color: var(--border); color: var(--secondary-foreground); font-weight: 600; }
+.button-secondary:hover { background: var(--accent); color: var(--accent-foreground); }
+.export-status { color: var(--muted-foreground); font-size: .7rem; max-width: 19rem; overflow-wrap: anywhere; }
+.export-status.success { color: var(--good); }
+.export-status.error { color: var(--bad); }
+.export-status.pending { color: var(--muted-foreground); }
 .filters { flex-wrap: wrap; }
 .field-label { color: var(--muted-foreground); font-size: .76rem; font-weight: 600; }
 .filters select { background: var(--background); min-width: min(100%, 18rem); padding-right: 2rem; }
@@ -424,7 +430,7 @@ tr:last-child td, tr:last-child th { border-bottom: 0; }
   .controls button { flex: 1; }
   .filters select { min-width: 0; width: 100%; }
   .toolbar-spacer { display: none; }
-  .filters .button-primary { justify-content: center; width: 100%; }
+   .filters .button-primary, .filters .button-secondary { justify-content: center; width: 100%; }
   .refresh-countdown { text-align: center; }
   .section-heading, .panel-heading { flex-direction: column; gap: .45rem; }
   .section-heading .section-note { max-width: none; text-align: left; }

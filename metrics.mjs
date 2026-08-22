@@ -23,7 +23,7 @@ import { buildAdvice } from "./analytics/advice.mjs";
 import { normalizeSnapshot, sanitizePublic } from "./analytics/snapshot.mjs";
 import { collectConfiguredEnvironmentSync, collectObservedEnvironment } from "./environment.mjs";
 
-const TABLE_SPECS = Object.freeze({
+export const TABLE_SPECS = Object.freeze({
   session: {
     required: ["id"],
     columns: {
@@ -77,7 +77,7 @@ const RANGE_LABELS = Object.freeze({
 
 export const TABLES = Object.freeze(Object.keys(TABLE_SPECS));
 
-function sessionAlias(sessionId) {
+export function sessionAlias(sessionId) {
   return createHash("sha256").update(String(sessionId)).digest("hex").slice(0, 16);
 }
 

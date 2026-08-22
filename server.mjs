@@ -9,12 +9,15 @@ import {
   openReadOnlyDatabase,
   resolveDatabasePath,
 } from "./metrics.mjs";
+import { buildSessionExport, isExportHeader } from "./session-export.mjs";
 
 const DASHBOARD_DIR = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_PORT = 4173;
 const MAX_CACHE_ENTRIES = 16;
 const SECURITY_HEADERS = {
   "Cache-Control": "no-store",
+  "Pragma": "no-cache",
+  "Expires": "0",
   "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
   "Referrer-Policy": "no-referrer",
   "X-Content-Type-Options": "nosniff",
@@ -48,6 +51,18 @@ function jsonResponse(response, status, value, head = false) {
 
 function genericError(response, status, message, head = false) {
   jsonResponse(response, status, { error: message }, head);
+}
+
+function sameOriginExportRequest(request) {
+  const origin = request.headers.origin;
+  if (!origin) return true;
+  try {
+    const parsed = new URL(origin);
+    const host = String(request.headers.host ?? "").toLowerCase();
+    return parsed.protocol === "http:" && isLoopbackHost(parsed.host) && parsed.host.toLowerCase() === host;
+  } catch {
+    return false;
+  }
 }
 
 function isContained(root, candidate) {
@@ -188,6 +203,38 @@ export function createDashboardServer({ dbPath, staticRoot = DASHBOARD_DIR, insp
         return jsonResponse(response, 200, value, head);
       } catch {
         return genericError(response, 503, "Database unavailable", head);
+      }
+    }
+
+    if (url.pathname === "/api/session-export") {
+      if (!sameOriginExportRequest(request) || !isExportHeader(request.headers["x-opencode-export"])) {
+        return genericError(response, 403, "Export confirmation required", head);
+      }
+      const roots = url.searchParams.getAll("root");
+      if (roots.length !== 1 || !roots[0]) return genericError(response, 400, "Root selection required", head);
+      const requestedRoot = roots[0];
+      try {
+        if (!db) db = openReadOnlyDatabase(resolveDatabasePath(dbPath));
+        let transactionStarted = false;
+        let value;
+        try {
+          db.exec("BEGIN");
+          transactionStarted = true;
+          value = buildSessionExport(db, requestedRoot);
+          db.exec("COMMIT");
+          transactionStarted = false;
+        } finally {
+          if (transactionStarted) {
+            try {
+              db.exec("ROLLBACK");
+            } catch {
+              // Rollback is best effort after a failed read.
+            }
+          }
+        }
+        return jsonResponse(response, 200, value, head);
+      } catch {
+        return genericError(response, 400, "Session export unavailable", head);
       }
     }
 
