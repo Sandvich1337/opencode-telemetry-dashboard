@@ -63,8 +63,15 @@ function canonicalize(value) {
   }
   if (Array.isArray(value)) return value.map(canonicalize);
   if (!value || typeof value !== "object") fail("unsupported value");
-  const result = {};
-  for (const key of Object.keys(value).sort(codeUnitCompare)) result[key] = canonicalize(value[key]);
+  const result = Object.create(null);
+  for (const key of Object.keys(value).sort(codeUnitCompare)) {
+    Object.defineProperty(result, key, {
+      value: canonicalize(value[key]),
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+  }
   return result;
 }
 
@@ -347,12 +354,19 @@ function dataText(row, detail) {
   const cell = cellForAlias(row, detail, "data");
   if (!cell || cell.type === "null") return null;
   if (cell.type === "text") return cell.value;
-  if (cell.type === "blob") return new TextDecoder().decode(Buffer.from(cell.value, "base64"));
+  if (cell.type === "blob") {
+    try {
+      return new TextDecoder("utf-8", { fatal: true }).decode(Buffer.from(cell.value, "base64"));
+    } catch {
+      return { invalidUtf8: true };
+    }
+  }
   return null;
 }
 
 function parseData(row, detail) {
   const text = dataText(row, detail);
+  if (text && typeof text === "object" && text.invalidUtf8 === true) return { value: null, anomaly: "data-invalid-utf8" };
   if (text === null || !text.trim()) return { value: null, anomaly: "data-missing" };
   try {
     return { value: JSON.parse(text), anomaly: null };
@@ -474,10 +488,10 @@ function timelineRecord(table, row, detail, ref, tree, sessionIdOverride = null)
 
 function sortTimeline(records) {
   return [...records].sort((left, right) => {
-    const leftStart = left.time.startMs ?? left.time.endMs;
-    const rightStart = right.time.startMs ?? right.time.endMs;
-    const leftPrimary = leftStart === null || leftStart === undefined ? Number.POSITIVE_INFINITY : leftStart;
-    const rightPrimary = rightStart === null || rightStart === undefined ? Number.POSITIVE_INFINITY : rightStart;
+    const leftPrimary = left.time.startMs === null || left.time.startMs === undefined
+      ? Number.POSITIVE_INFINITY : left.time.startMs;
+    const rightPrimary = right.time.startMs === null || right.time.startMs === undefined
+      ? Number.POSITIVE_INFINITY : right.time.startMs;
     return (leftPrimary - rightPrimary)
       || ((left.time.endMs ?? Number.POSITIVE_INFINITY) - (right.time.endMs ?? Number.POSITIVE_INFINITY))
       || ((left.treeOrdinal ?? Number.POSITIVE_INFINITY) - (right.treeOrdinal ?? Number.POSITIVE_INFINITY))
@@ -551,7 +565,10 @@ function metricsSchema(snapshot) {
 function coverageAnomalies(timeline, transcript) {
   return [
     ...timeline.flatMap((record) => record.anomalies),
-    ...transcript.messages.flatMap((record) => record.anomalies),
+    ...transcript.messages.flatMap((record) => [
+      ...record.anomalies,
+      ...record.parts.flatMap((part) => part.anomalies),
+    ]),
     ...transcript.unattachedParts.flatMap((record) => record.anomalies),
   ].sort(codeUnitCompare).filter((value, index, values) => index === 0 || value !== values[index - 1]);
 }

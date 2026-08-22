@@ -395,6 +395,8 @@ function clearData() {
   // like a valid comparison period in an active view.
   dashboardState.clearPayload();
   dashboardState.clearPayload();
+  currentSessionOptions = [];
+  updateExportControl();
 }
 
 function featureContext() {
@@ -418,8 +420,8 @@ function hasCurrentPayload() {
 
 function selectedExportRoot() {
   const value = byId("session")?.value || "";
-  const selected = currentSessionOptions.find((option) => option?.alias === value && option?.kind === "root");
-  return selected && /^[0-9a-f]{16}$/.test(value) ? value : "";
+  const matchingRoots = currentSessionOptions.filter((option) => option?.alias === value && option?.kind === "root");
+  return matchingRoots.length === 1 && /^[0-9a-f]{16}$/.test(value) ? value : "";
 }
 
 function updateExportControl(kind = "ready", detail = "") {

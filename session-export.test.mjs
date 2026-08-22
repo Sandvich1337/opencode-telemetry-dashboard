@@ -74,6 +74,8 @@ test("builds a deterministic, raw-fidelity snapshot without changing SQLite", ()
     const rawSessions = JSON.parse(first.files[1].content);
     assert.equal(rawSessions.rows.length, 3);
     assert.deepEqual(rawSessions.rows[2][5], { type: "blob", value: "AP8=" });
+    assert.equal(rawSessions.rows[2][3].type, "real");
+    assert.deepEqual(rawSessions.rows[0][5], { type: "null", value: null });
     assert.equal(rawSessions.rows[2][4].value, "Root title");
     const manifest = JSON.parse(first.files[0].content);
     assert.equal(manifest.coverage.mode, "snapshot-only");
@@ -99,6 +101,33 @@ test("builds a deterministic, raw-fidelity snapshot without changing SQLite", ()
   }
 });
 
+test("preserves SQLite big integers and records unsupported content without inventing text", () => {
+  const created = fixture();
+  const writer = new DatabaseSync(created.path);
+  writer.exec("ALTER TABLE session ADD COLUMN big_value INTEGER;");
+  writer.prepare("UPDATE session SET big_value = ? WHERE id = 'root'").run(9007199254740993123n);
+  writer.prepare("UPDATE part SET time_created = NULL, time_updated = NULL, data = ? WHERE id = 'unattached-part'").run(Buffer.from([0xff, 0xfe]));
+  writer.close();
+
+  const db = new DatabaseSync(created.path, { readOnly: true });
+  try {
+    const exported = buildSessionExport(db, sessionAlias("root"));
+    const rawSessions = JSON.parse(exported.files[1].content);
+    const root = rawSessions.rows.find((row) => row[0].value === "root");
+    assert.deepEqual(root.at(-1), { type: "integer", value: "9007199254740993123" });
+    const manifest = JSON.parse(exported.files[0].content);
+    assert.ok(manifest.anomalies.includes("data-invalid-utf8"));
+    assert.ok(manifest.anomalies.includes("time-missing"));
+    const transcript = JSON.parse(exported.files.at(-1).content);
+    const unsupported = transcript.unattachedParts.find((part) => part.id === "unattached-part");
+    assert.deepEqual(unsupported.segments, []);
+    assert.ok(unsupported.anomalies.includes("data-invalid-utf8"));
+  } finally {
+    db.close();
+    rmSync(created.directory, { recursive: true, force: true });
+  }
+});
+
 test("canonical JSON has sorted keys and one trailing LF", () => {
   assert.equal(canonicalJson({ z: 1, a: { y: true, x: null } }), '{"a":{"x":null,"y":true},"z":1}\n');
 });
@@ -109,6 +138,29 @@ test("rejects child selection and unknown aliases without falling back to all se
   try {
     assert.throws(() => buildSessionExport(db, sessionAlias("child")), /selected session is not a root/);
     assert.throws(() => buildSessionExport(db, "0000000000000000"), /unknown root selection/);
+    assert.throws(() => buildSessionExport(db, sessionAlias("ROOT")), /unknown root selection/);
+    assert.throws(() => buildSessionExport(db, `${sessionAlias("root")}x`), /invalid root selection/);
+  } finally {
+    db.close();
+    rmSync(created.directory, { recursive: true, force: true });
+  }
+});
+
+test("fails closed for a part whose direct session and message point across trees", () => {
+  const created = fixture();
+  const writer = new DatabaseSync(created.path);
+  writer.prepare("INSERT INTO part VALUES (?, ?, ?, ?, ?, ?)").run(
+    "cross-tree-part",
+    "root",
+    "unrelated-message",
+    1,
+    2,
+    JSON.stringify({ type: "tool", tool: "task" }),
+  );
+  writer.close();
+  const db = new DatabaseSync(created.path, { readOnly: true });
+  try {
+    assert.throws(() => buildSessionExport(db, sessionAlias("root")), /cross-tree part relation/);
   } finally {
     db.close();
     rmSync(created.directory, { recursive: true, force: true });

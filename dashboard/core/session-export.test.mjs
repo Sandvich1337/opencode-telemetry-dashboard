@@ -8,6 +8,12 @@ if (!globalThis.crypto) globalThis.crypto = webcrypto;
 
 const encoder = new TextEncoder();
 
+function canonical(value) {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
+}
+
 async function hash(text) {
   const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(text)));
   return [...bytes].map((value) => value.toString(16).padStart(2, "0")).join("");
@@ -25,10 +31,14 @@ async function bundle() {
     kind: "opencode-session-contents",
     filename: "opencode-session-contents-0123456789abcdef.zip",
     selected: { alias: "0123456789abcdef" },
-    coverage: { mode: "snapshot-only", runtimeSnapshot: { included: true }, liveTelemetry: { included: false } },
+    coverage: {
+      mode: "snapshot-only",
+      runtimeSnapshot: { included: true, consistency: "single-sqlite-read-transaction" },
+      liveTelemetry: { included: false, reason: "not-connected" },
+    },
     files: files.map(({ path, mediaType, bytes, sha256 }) => ({ path, mediaType, bytes, sha256 })),
   };
-  const content = `${JSON.stringify(manifest)}\n`;
+  const content = `${JSON.stringify(canonical(manifest))}\n`;
   return { bundleSchemaVersion: 1, filename: manifest.filename, files: [{ path: "manifest.json", mediaType: "application/json; charset=utf-8", bytes: encoder.encode(content).byteLength, sha256: await hash(content), content }, ...files] };
 }
 
@@ -46,4 +56,15 @@ test("rejects missing, altered, or undeclared content", async () => {
   const invalid = await bundle();
   invalid.files = invalid.files.filter((file) => file.path !== "raw/parts.json");
   await assert.rejects(() => validateSessionExport(invalid), /Session export unavailable/);
+});
+
+test("rejects non-canonical JSON and invalid ZIP entry sets", async () => {
+  const first = await validateSessionExport(await bundle());
+  const altered = first.bundle;
+  altered.files[1].content = '{"z":1,"a":2}\n';
+  altered.files[1].bytes = encoder.encode(altered.files[1].content).byteLength;
+  altered.files[1].sha256 = await hash(altered.files[1].content);
+  await assert.rejects(() => validateSessionExport(altered), /Session export unavailable/);
+  assert.throws(() => makeZip32(first.files.slice(1)), /Session export unavailable/);
+  assert.throws(() => makeZip32([...first.files.slice(0, -1), first.files[0]]), /Session export unavailable/);
 });

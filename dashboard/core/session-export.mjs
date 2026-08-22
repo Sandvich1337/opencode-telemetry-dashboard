@@ -26,6 +26,39 @@ function codeUnitCompare(left, right) {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
+function canonicalize(value) {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) fail();
+    return value;
+  }
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (!value || typeof value !== "object") fail();
+  const result = Object.create(null);
+  for (const key of Object.keys(value).sort(codeUnitCompare)) {
+    Object.defineProperty(result, key, { value: canonicalize(value[key]), enumerable: true, configurable: true, writable: true });
+  }
+  return result;
+}
+
+function canonicalJson(value) {
+  const encoded = JSON.stringify(canonicalize(value));
+  if (typeof encoded !== "string") fail();
+  return `${encoded}\n`;
+}
+
+function parseCanonicalJson(content) {
+  if (!content.endsWith("\n") || content.endsWith("\n\n")) fail();
+  let parsed;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    fail();
+  }
+  if (canonicalJson(parsed) !== content) fail();
+  return parsed;
+}
+
 function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -71,19 +104,18 @@ export async function validateSessionExport(bundle) {
     if (!Number.isSafeInteger(file.bytes) || file.bytes !== bytes.byteLength) fail();
     if (!/^[0-9a-f]{64}$/.test(String(file.sha256))) fail();
     if (await digest(bytes) !== file.sha256) fail();
+    parseCanonicalJson(file.content);
     byPath.set(file.path, { ...file, bytes: new Uint8Array(bytes) });
   }
   if (EXPORT_PATHS.some((path) => !byPath.has(path))) fail();
   const manifestBytes = byPath.get("manifest.json").bytes;
-  let manifest;
-  try {
-    manifest = JSON.parse(new TextDecoder().decode(manifestBytes));
-  } catch {
-    fail();
-  }
+  const manifest = parseCanonicalJson(new TextDecoder().decode(manifestBytes));
   if (!isObject(manifest) || manifest.bundleSchemaVersion !== 1 || manifest.kind !== "opencode-session-contents") fail();
   if (manifest.filename !== bundle.filename || manifest.coverage?.mode !== "snapshot-only") fail();
-  if (manifest.coverage?.runtimeSnapshot?.included !== true || manifest.coverage?.liveTelemetry?.included !== false) fail();
+  if (manifest.coverage?.runtimeSnapshot?.included !== true
+    || manifest.coverage?.runtimeSnapshot?.consistency !== "single-sqlite-read-transaction"
+    || manifest.coverage?.liveTelemetry?.included !== false
+    || manifest.coverage?.liveTelemetry?.reason !== "not-connected") fail();
   if (!Array.isArray(manifest.files) || manifest.files.length !== 6) fail();
   const manifestPaths = new Set();
   const expectedManifestPaths = new Set(EXPORT_PATHS.slice(1));
@@ -101,12 +133,19 @@ export async function validateSessionExport(bundle) {
 export function makeZip32(bundle) {
   const inputFiles = Array.isArray(bundle) ? bundle : bundle?.files;
   if (!Array.isArray(inputFiles)) fail();
+  if (inputFiles.length !== EXPORT_PATHS.length) fail();
+  if (inputFiles.some((file) => !isObject(file) || typeof file.path !== "string")) fail();
   const files = [...inputFiles].sort((left, right) => codeUnitCompare(left.path, right.path));
   if (files.length > 0xffff) fail();
+  if (files.some((file, index) => file?.path !== EXPORT_PATHS.slice().sort(codeUnitCompare)[index])) fail();
   const encoded = files.map((file) => {
-    if (typeof file.path !== "string" || file.path.includes("\\") || file.path.startsWith("/") || file.path.includes("..")) fail();
+    if (typeof file.path !== "string" || !EXPORT_PATHS.includes(file.path)
+      || file.path.includes("\\") || file.path.startsWith("/") || file.path.split("/").some((part) => !part || part === "." || part === "..")) fail();
     const name = textEncoder.encode(file.path);
-    const data = file.bytes instanceof Uint8Array ? file.bytes : textEncoder.encode(String(file.content ?? ""));
+    const data = file.bytes instanceof Uint8Array
+      ? file.bytes
+      : typeof file.content === "string" ? textEncoder.encode(file.content) : null;
+    if (!data) fail();
     if (name.byteLength > 0xffff || data.byteLength > 0xffffffff) fail();
     return { name, data, crc: crc32(data) };
   });

@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { webcrypto } from "node:crypto";
 import test from "node:test";
 import { readFileSync } from "node:fs";
+
+if (!globalThis.crypto) globalThis.crypto = webcrypto;
 
 class FakeElement {
   constructor(id, dataset = {}) {
@@ -39,6 +42,7 @@ class FakeElement {
   replaceChildren() { this.innerHTML = ""; }
   closest() { return null; }
   focus() { this.ownerDocument.activeElement = this; }
+  click() { this.clicked = true; }
   scrollIntoView() {}
   querySelectorAll() { return []; }
   emit(type, target = this, detail = {}) { this.listeners.get(type)?.({ target, currentTarget: this, preventDefault() {}, ...detail }); }
@@ -66,6 +70,11 @@ function dashboardDocument() {
     getElementById(id) {
       if (!elements.has(id)) elements.set(id, new FakeElement(id));
       const element = elements.get(id);
+      element.ownerDocument = documentRef;
+      return element;
+    },
+    createElement(tagName) {
+      const element = new FakeElement(String(tagName));
       element.ownerDocument = documentRef;
       return element;
     },
@@ -120,6 +129,44 @@ function configuredMetricsPayload(from, to) {
     },
   };
   return payload;
+}
+
+function canonical(value) {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
+}
+
+async function sessionExportBundle() {
+  const encoder = new TextEncoder();
+  const digest = async (content) => {
+    const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(content)));
+    return [...bytes].map((value) => value.toString(16).padStart(2, "0")).join("");
+  };
+  const paths = ["raw/sessions.json", "raw/messages.json", "raw/parts.json", "timeline.json", "metrics.json", "transcript.json"];
+  const files = [];
+  for (const path of paths) {
+    const content = `${JSON.stringify({ path })}\n`;
+    files.push({ path, mediaType: "application/json; charset=utf-8", bytes: encoder.encode(content).byteLength, sha256: await digest(content), content });
+  }
+  const manifest = canonical({
+    bundleSchemaVersion: 1,
+    kind: "opencode-session-contents",
+    filename: "opencode-session-contents-0123456789abcdef.zip",
+    selected: { alias: "0123456789abcdef" },
+    coverage: {
+      mode: "snapshot-only",
+      runtimeSnapshot: { included: true, consistency: "single-sqlite-read-transaction" },
+      liveTelemetry: { included: false, reason: "not-connected" },
+    },
+    files: files.map(({ path, mediaType, bytes, sha256 }) => ({ path, mediaType, bytes, sha256 })),
+  });
+  const content = `${JSON.stringify(manifest)}\n`;
+  return {
+    bundleSchemaVersion: 1,
+    filename: manifest.filename,
+    files: [{ path: "manifest.json", mediaType: "application/json; charset=utf-8", bytes: encoder.encode(content).byteLength, sha256: await digest(content), content }, ...files],
+  };
 }
 
 test("dashboard integration preserves shared privacy filters and requests a prior period", async () => {
@@ -399,5 +446,61 @@ test("dashboard exposes current-request failures as an unavailable state", async
     globalThis.document = originalDocument;
     globalThis.window = originalWindow;
     globalThis.fetch = originalFetch;
+  }
+});
+
+test("session export requires confirmation and reports a local download", async () => {
+  const originalDocument = globalThis.document;
+  const originalWindow = globalThis.window;
+  const originalFetch = globalThis.fetch;
+  const originalUrl = globalThis.URL;
+  const documentRef = dashboardDocument();
+  const bundle = await sessionExportBundle();
+  const rootAlias = "0123456789abcdef";
+  const calls = [];
+  const responses = [metricsPayload(1, 2), metricsPayload(0, 1)];
+  responses[0].sessionOptions = [{ alias: rootAlias, kind: "root", parentAlias: null }];
+  let confirmed = false;
+  let exportFailure = false;
+  let revoked = null;
+  globalThis.document = documentRef;
+  globalThis.window = { setInterval() {}, confirm() { return confirmed; } };
+  globalThis.URL = {
+    createObjectURL() { return "blob:session-export"; },
+    revokeObjectURL(value) { revoked = value; },
+  };
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, options });
+    if (String(url).startsWith("/api/session-export")) {
+      if (exportFailure) return { ok: false, async json() { return { error: "internal detail" }; } };
+      return response(bundle);
+    }
+    return response(responses.shift() ?? metricsPayload(0, 1));
+  };
+
+  try {
+    const app = await import(`./app.mjs?session-export=${Date.now()}`);
+    await new Promise((resolve) => setImmediate(resolve));
+    const select = documentRef.elements.get("session");
+    const button = documentRef.elements.get("sessionExport");
+    select.value = rootAlias;
+    await button.listeners.get("click")();
+    assert.equal(calls.some(({ url }) => String(url).startsWith("/api/session-export")), false);
+    confirmed = true;
+    await button.listeners.get("click")();
+    assert.equal(calls.filter(({ url }) => String(url).startsWith("/api/session-export")).length, 1);
+    const exportCall = calls.find(({ url }) => String(url).startsWith("/api/session-export"));
+    assert.equal(exportCall.options.headers["X-OpenCode-Export"], "session-contents-v1");
+    assert.equal(documentRef.elements.get("sessionExportStatus").textContent, "Session archive downloaded.");
+    assert.equal(revoked, "blob:session-export");
+    exportFailure = true;
+    await button.listeners.get("click")();
+    assert.equal(documentRef.elements.get("sessionExportStatus").textContent, "Session export unavailable.");
+    assert.equal(app.dashboardState.snapshot.range, "24h");
+  } finally {
+    globalThis.document = originalDocument;
+    globalThis.window = originalWindow;
+    globalThis.fetch = originalFetch;
+    globalThis.URL = originalUrl;
   }
 });
