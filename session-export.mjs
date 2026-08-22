@@ -600,7 +600,7 @@ function getDataVersion(db) {
   }
 }
 
-export function buildSessionExport(db, requestedAlias) {
+function buildSessionExportInTransaction(db, requestedAlias) {
   const snapshot = readSnapshot(db);
   const tree = selectedTree(snapshot, requestedAlias);
   const captured = selectedRows(snapshot, tree);
@@ -694,6 +694,26 @@ export function buildSessionExport(db, requestedAlias) {
   const files = [manifestFile, rawFiles["raw/sessions.json"], rawFiles["raw/messages.json"], rawFiles["raw/parts.json"], timelineFile, metricsFile, transcriptFile];
   if (files.length !== EXPORT_FILES.length || files.some((file, index) => file.path !== EXPORT_FILES[index])) fail("bundle file coverage mismatch");
   return { bundleSchemaVersion: BUNDLE_SCHEMA_VERSION, filename: manifest.filename, files };
+}
+
+export function buildSessionExport(db, requestedAlias) {
+  let transactionStarted = false;
+  try {
+    db.exec("BEGIN");
+    transactionStarted = true;
+    const value = buildSessionExportInTransaction(db, requestedAlias);
+    db.exec("COMMIT");
+    transactionStarted = false;
+    return value;
+  } finally {
+    if (transactionStarted) {
+      try {
+        db.exec("ROLLBACK");
+      } catch {
+        // Rollback is best effort after a failed read.
+      }
+    }
+  }
 }
 
 export function isExportHeader(value) {

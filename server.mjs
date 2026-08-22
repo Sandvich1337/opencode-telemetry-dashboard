@@ -215,23 +215,7 @@ export function createDashboardServer({ dbPath, staticRoot = DASHBOARD_DIR, insp
       const requestedRoot = roots[0];
       try {
         if (!db) db = openReadOnlyDatabase(resolveDatabasePath(dbPath));
-        let transactionStarted = false;
-        let value;
-        try {
-          db.exec("BEGIN");
-          transactionStarted = true;
-          value = buildSessionExport(db, requestedRoot);
-          db.exec("COMMIT");
-          transactionStarted = false;
-        } finally {
-          if (transactionStarted) {
-            try {
-              db.exec("ROLLBACK");
-            } catch {
-              // Rollback is best effort after a failed read.
-            }
-          }
-        }
+        const value = buildSessionExport(db, requestedRoot);
         return jsonResponse(response, 200, value, head);
       } catch {
         return genericError(response, 400, "Session export unavailable", head);

@@ -68,3 +68,19 @@ test("rejects non-canonical JSON and invalid ZIP entry sets", async () => {
   assert.throws(() => makeZip32(first.files.slice(1)), /Session export unavailable/);
   assert.throws(() => makeZip32([...first.files.slice(0, -1), first.files[0]]), /Session export unavailable/);
 });
+
+test("rejects manifest references and content digests after tampering", async () => {
+  const invalidManifestReference = await bundle();
+  const manifest = JSON.parse(invalidManifestReference.files[0].content);
+  manifest.files[0].sha256 = "0".repeat(64);
+  invalidManifestReference.files[0].content = `${JSON.stringify(canonical(manifest))}\n`;
+  invalidManifestReference.files[0].bytes = encoder.encode(invalidManifestReference.files[0].content).byteLength;
+  invalidManifestReference.files[0].sha256 = await hash(invalidManifestReference.files[0].content);
+  await assert.rejects(() => validateSessionExport(invalidManifestReference), /Session export unavailable/);
+
+  const invalidContentDigest = await bundle();
+  invalidContentDigest.files[1].content = '{"tampered":true}\n';
+  invalidContentDigest.files[1].bytes = encoder.encode(invalidContentDigest.files[1].content).byteLength;
+  invalidContentDigest.files[1].sha256 = await hash(invalidContentDigest.files[1].content);
+  await assert.rejects(() => validateSessionExport(invalidContentDigest), /Session export unavailable/);
+});

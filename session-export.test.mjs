@@ -166,3 +166,85 @@ test("fails closed for a part whose direct session and message point across tree
     rmSync(created.directory, { recursive: true, force: true });
   }
 });
+
+test("owns one transaction and fails closed when called inside another", () => {
+  const created = fixture();
+  const db = new DatabaseSync(created.path, { readOnly: true });
+  try {
+    assert.doesNotThrow(() => buildSessionExport(db, sessionAlias("root")));
+    assert.doesNotThrow(() => db.exec("BEGIN"));
+    db.exec("ROLLBACK");
+    db.exec("BEGIN");
+    assert.throws(() => buildSessionExport(db, sessionAlias("root")), /transaction/i);
+    db.exec("ROLLBACK");
+  } finally {
+    db.close();
+    rmSync(created.directory, { recursive: true, force: true });
+  }
+});
+
+test("handles reachable and disconnected session cycles without revisiting rows", () => {
+  const created = fixture();
+  const writer = new DatabaseSync(created.path);
+  writer.exec(`
+    INSERT INTO session VALUES ('cycle-a', 'child', 10, 11, 'Cycle A', NULL);
+    INSERT INTO session VALUES ('cycle-b', 'cycle-a', 12, 13, 'Cycle B', NULL);
+    INSERT INTO session VALUES ('disconnected-a', 'disconnected-b', 14, 15, 'Disconnected A', NULL);
+    INSERT INTO session VALUES ('disconnected-b', 'disconnected-a', 16, 17, 'Disconnected B', NULL);
+  `);
+  writer.close();
+  const db = new DatabaseSync(created.path, { readOnly: true });
+  try {
+    const exported = buildSessionExport(db, sessionAlias("root"));
+    const manifest = JSON.parse(exported.files[0].content);
+    assert.deepEqual(manifest.tree.sessionIds, ["root", "child", "cycle-a", "grandchild", "cycle-b"]);
+    assert.equal(manifest.counts.sessions, 5);
+    assert.equal(JSON.parse(exported.files[1].content).rows.some((row) => row[0].value === "disconnected-a"), false);
+  } finally {
+    db.close();
+    rmSync(created.directory, { recursive: true, force: true });
+  }
+});
+
+test("preserves exact timeline order and SQLite provenance", () => {
+  const created = fixture();
+  const db = new DatabaseSync(created.path, { readOnly: true });
+  try {
+    const exported = buildSessionExport(db, sessionAlias("root"));
+    const timeline = JSON.parse(exported.files[4].content).events;
+    assert.deepEqual(timeline.map((event) => event.id), [
+      "root", "root-message", "root-part", "child", "child-message", "child-part", "grandchild", "unattached-part",
+    ]);
+    assert.ok(timeline.every((event) => event.provenance === "sqlite-snapshot"));
+    assert.ok(timeline.every((event) => event.rawRef.path.startsWith("raw/")));
+    assert.equal(timeline[0].time.evidence[0].source, "row.time_created");
+  } finally {
+    db.close();
+    rmSync(created.directory, { recursive: true, force: true });
+  }
+});
+
+test("keeps multiple task children and unknown causality explicit", () => {
+  const created = fixture();
+  const writer = new DatabaseSync(created.path);
+  writer.prepare("INSERT INTO message VALUES (?, ?, ?, ?, ?)").run(
+    "task-message", "root", 40, 41, JSON.stringify({ role: "assistant", text: "task" }),
+  );
+  const part = writer.prepare("INSERT INTO part VALUES (?, ?, ?, ?, ?, ?)");
+  part.run("task-parent", "root", "task-message", 42, 43, JSON.stringify({ type: "tool", tool: "task" }));
+  part.run("task-child-b", "root", "task-message", 44, 45, JSON.stringify({ type: "text", text: "child b" }));
+  part.run("task-child-a", "root", "task-message", 46, 47, JSON.stringify({ type: "text", text: "child a" }));
+  part.run("task-unknown", "root", "missing-task-message", 48, 49, JSON.stringify({ type: "unknown" }));
+  writer.close();
+  const db = new DatabaseSync(created.path, { readOnly: true });
+  try {
+    const exported = buildSessionExport(db, sessionAlias("root"));
+    const transcript = JSON.parse(exported.files.at(-1).content);
+    const task = transcript.messages.find((message) => message.id === "task-message");
+    assert.deepEqual(task.parts.map((part) => part.id), ["task-child-a", "task-child-b", "task-parent"]);
+    assert.equal(transcript.unattachedParts.find((part) => part.id === "task-unknown").messageId, "missing-task-message");
+  } finally {
+    db.close();
+    rmSync(created.directory, { recursive: true, force: true });
+  }
+});

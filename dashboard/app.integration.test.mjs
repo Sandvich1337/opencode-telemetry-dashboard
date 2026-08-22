@@ -460,7 +460,9 @@ test("session export requires confirmation and reports a local download", async 
   const calls = [];
   const responses = [metricsPayload(1, 2), metricsPayload(0, 1)];
   responses[0].sessionOptions = [{ alias: rootAlias, kind: "root", parentAlias: null }];
+  const exportGate = deferred();
   let confirmed = false;
+  let blockExport = false;
   let exportFailure = false;
   let revoked = null;
   globalThis.document = documentRef;
@@ -472,6 +474,7 @@ test("session export requires confirmation and reports a local download", async 
   globalThis.fetch = async (url, options) => {
     calls.push({ url, options });
     if (String(url).startsWith("/api/session-export")) {
+      if (blockExport) return exportGate.promise;
       if (exportFailure) return { ok: false, async json() { return { error: "internal detail" }; } };
       return response(bundle);
     }
@@ -483,6 +486,10 @@ test("session export requires confirmation and reports a local download", async 
     await new Promise((resolve) => setImmediate(resolve));
     const select = documentRef.elements.get("session");
     const button = documentRef.elements.get("sessionExport");
+    select.value = "not-a-root";
+    await button.listeners.get("click")();
+    assert.equal(calls.some(({ url }) => String(url).startsWith("/api/session-export")), false);
+    assert.match(documentRef.elements.get("sessionExportStatus").textContent, /Select one root session/);
     select.value = rootAlias;
     await button.listeners.get("click")();
     assert.equal(calls.some(({ url }) => String(url).startsWith("/api/session-export")), false);
@@ -497,6 +504,16 @@ test("session export requires confirmation and reports a local download", async 
     await button.listeners.get("click")();
     assert.equal(documentRef.elements.get("sessionExportStatus").textContent, "Session export unavailable.");
     assert.equal(app.dashboardState.snapshot.range, "24h");
+    exportFailure = false;
+    blockExport = true;
+    const pending = button.listeners.get("click")();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(button.disabled, true);
+    const duplicate = button.listeners.get("click")();
+    await duplicate;
+    assert.equal(calls.filter(({ url }) => String(url).startsWith("/api/session-export")).length, 3);
+    exportGate.resolve(response(bundle));
+    await pending;
   } finally {
     globalThis.document = originalDocument;
     globalThis.window = originalWindow;
