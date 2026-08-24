@@ -7,8 +7,8 @@ import {
   TABLE_SPECS,
 } from "./metrics.mjs";
 
-export const EXPORT_HEADER = "session-contents-v1";
-export const BUNDLE_SCHEMA_VERSION = 1;
+export const EXPORT_HEADER = "session-contents-v2";
+export const BUNDLE_SCHEMA_VERSION = 2;
 export const EXPORT_FILES = Object.freeze([
   "manifest.json",
   "raw/sessions.json",
@@ -17,6 +17,7 @@ export const EXPORT_FILES = Object.freeze([
   "timeline.json",
   "metrics.json",
   "transcript.json",
+  "chat.json",
 ]);
 
 const RAW_FILE_BY_TABLE = Object.freeze({
@@ -76,7 +77,7 @@ function canonicalize(value) {
 }
 
 export function canonicalJson(value) {
-  return `${JSON.stringify(canonicalize(value))}\n`;
+  return `${JSON.stringify(canonicalize(value), null, 2)}\n`;
 }
 
 function sha256(value) {
@@ -379,10 +380,10 @@ function jsonPointer(pointer, key) {
   return `${pointer}/${String(key).replaceAll("~", "~0").replaceAll("/", "~1")}`;
 }
 
-function textSegments(value, pointer) {
+function textSegments(value, pointer, ref) {
   const segments = [];
   const add = (text, sourcePointer) => {
-    if (typeof text === "string") segments.push({ kind: "text", text, source: { pointer: sourcePointer } });
+    if (typeof text === "string") segments.push({ kind: "text", text, source: { pointer: sourcePointer, rawRef: ref } });
   };
   if (!value || typeof value !== "object") return segments;
   for (const field of TEXT_FIELDS) {
@@ -401,7 +402,7 @@ function explicitProjection(row, detail, table, ref) {
   const parsed = parseData(row, detail);
   const value = parsed.value;
   const pointer = "/data";
-  const segments = textSegments(value, pointer);
+  const segments = textSegments(value, pointer, ref);
   const result = {
     id: idValue(row, detail),
     rawRef: ref,
@@ -419,6 +420,29 @@ function explicitProjection(row, detail, table, ref) {
     result.sessionId = scalarValue(cellForAlias(row, detail, "sessionId"));
     result.messageId = scalarValue(cellForAlias(row, detail, "messageId"));
     if (typeof value?.state?.status === "string") result.status = value.state.status;
+    if (result.type === "tool" || typeof result.tool === "string") {
+      const toolCall = { sources: {} };
+      const fields = [
+        ["name", ["name", "tool"], value],
+        ["status", ["status"], value],
+        ["input", ["input", "args", "arguments"], value],
+        ["output", ["output", "result"], value],
+        ["error", ["error"], value],
+      ];
+      for (const [name, keys, sourceValue] of fields) {
+        let holder = sourceValue;
+        let key = keys.find((candidate) => holder && typeof holder === "object" && Object.hasOwn(holder, candidate));
+        if (!key && value?.state && typeof value.state === "object") {
+          holder = value.state;
+          key = keys.find((candidate) => Object.hasOwn(holder, candidate));
+        }
+        if (!key) continue;
+        if (name === "name" && (typeof holder[key] !== "string" || holder[key].length === 0)) continue;
+        toolCall[name] = holder[key];
+        toolCall.sources[name] = { pointer: jsonPointer(holder === value ? "/data" : "/data/state", key), rawRef: ref };
+      }
+      result.toolCall = toolCall;
+    }
   }
   return result;
 }
@@ -521,6 +545,94 @@ function buildTranscript(captured, snapshot, refs) {
   for (const message of messages) message.parts.sort((left, right) => codeUnitCompare(left.id, right.id));
   unattachedParts.sort((left, right) => codeUnitCompare(left.id, right.id));
   return { schemaVersion: BUNDLE_SCHEMA_VERSION, messages, unattachedParts };
+}
+
+function semanticRef(kind, id, alias, raw) {
+  return { kind, id, ...(alias ? { sessionAlias: alias } : {}), rawRef: raw };
+}
+
+function chatTime(row, detail, parsed) {
+  const evidence = timeEvidence(row, detail, parsed).evidence.find((item) => item.kind === "created");
+  return evidence?.normalizedMs ?? null;
+}
+
+function buildChat(captured, snapshot, tree, refs) {
+  const sessionById = new Map(captured.sessions.map((row) => [idValue(row, snapshot.schema.session), row]));
+  const messageRowsBySession = new Map();
+  for (const row of captured.messages) {
+    const id = idValue(row, snapshot.schema.message);
+    const sessionId = scalarValue(cellForAlias(row, snapshot.schema.message, "sessionId"));
+    if (!messageRowsBySession.has(sessionId)) messageRowsBySession.set(sessionId, []);
+    messageRowsBySession.get(sessionId).push(row);
+  }
+  const partsByMessage = new Map();
+  const unattachedBySession = new Map();
+  for (const row of captured.parts) {
+    const messageId = scalarValue(cellForAlias(row, snapshot.schema.part, "messageId"));
+    const sessionId = scalarValue(cellForAlias(row, snapshot.schema.part, "sessionId"));
+    if (messageId && captured.messages.some((message) => idValue(message, snapshot.schema.message) === messageId)) {
+      if (!partsByMessage.has(messageId)) partsByMessage.set(messageId, []);
+      partsByMessage.get(messageId).push(row);
+    } else {
+      if (!unattachedBySession.has(sessionId)) unattachedBySession.set(sessionId, []);
+      unattachedBySession.get(sessionId).push(row);
+    }
+  }
+  const orderRows = (rows, detail) => [...rows].sort((left, right) => {
+    const lt = chatTime(left, detail, parseData(left, detail).value);
+    const rt = chatTime(right, detail, parseData(right, detail).value);
+    return (lt === null ? Number.POSITIVE_INFINITY : lt) - (rt === null ? Number.POSITIVE_INFINITY : rt)
+      || codeUnitCompare(idValue(left, detail), idValue(right, detail))
+      || codeUnitCompare(rowDigest(left), rowDigest(right));
+  });
+  const sessionsByAlias = {};
+  for (const sessionId of tree.ids) {
+    const row = sessionById.get(sessionId);
+    const alias = sessionAlias(sessionId);
+    const parentId = parentValue(row, snapshot.schema.session);
+    const messages = orderRows(messageRowsBySession.get(sessionId) ?? [], snapshot.schema.message).map((messageRow) => {
+      const messageId = idValue(messageRow, snapshot.schema.message);
+      const projection = explicitProjection(messageRow, snapshot.schema.message, "message", refs.message.get(messageId));
+      projection.ref = semanticRef("message", messageId, alias, refs.message.get(messageId));
+      projection.parts = orderRows(partsByMessage.get(messageId) ?? [], snapshot.schema.part).map((partRow) => {
+        const partId = idValue(partRow, snapshot.schema.part);
+        const part = explicitProjection(partRow, snapshot.schema.part, "part", refs.part.get(partId));
+        part.ref = semanticRef("part", partId, alias, refs.part.get(partId));
+        return part;
+      });
+      return projection;
+    });
+    const unattachedParts = orderRows(unattachedBySession.get(sessionId) ?? [], snapshot.schema.part).map((partRow) => {
+      const partId = idValue(partRow, snapshot.schema.part);
+      const part = explicitProjection(partRow, snapshot.schema.part, "part", refs.part.get(partId));
+      part.ref = semanticRef("part", partId, alias, refs.part.get(partId));
+      return part;
+    });
+    const childIds = (snapshot.childrenByParent.get(sessionId) ?? []).filter((id) => tree.idSet.has(id));
+    sessionsByAlias[alias] = {
+      sessionRef: semanticRef("session", sessionId, alias, refs.session.get(sessionId)),
+      parentSessionRef: parentId && tree.idSet.has(parentId) ? semanticRef("session", parentId, sessionAlias(parentId), refs.session.get(parentId)) : null,
+      childSessionRefs: childIds.map((id) => semanticRef("session", id, sessionAlias(id), refs.session.get(id))),
+      messages,
+      unattachedParts,
+      deepDiveWindow: {
+        kind: "whole-session",
+        sessionRef: semanticRef("session", sessionId, alias, refs.session.get(sessionId)),
+        messages: messages.map((message) => message.ref),
+        unattachedParts: unattachedParts.map((part) => part.ref),
+      },
+    };
+  }
+  const subagentDeepDives = tree.ids.slice(1).map((sessionId) => {
+    const alias = sessionAlias(sessionId);
+    const session = sessionsByAlias[alias];
+    const assistantOutputRefs = session.messages.filter((message) => message.role === "assistant").flatMap((message) => [
+      ...message.segments.map(() => message.ref),
+      ...message.parts.filter((part) => part.toolCall).map((part) => part.ref),
+    ]);
+    return { sessionRef: session.sessionRef, parentSessionRef: session.parentSessionRef, invocationRef: null, window: session.deepDiveWindow, assistantOutputRefs };
+  });
+  return { schemaVersion: 1, kind: "opencode-visible-chat", linkagePolicy: "parent-session-only", rootSessionRef: semanticRef("session", tree.rootId, sessionAlias(tree.rootId), refs.session.get(tree.rootId)), sessionOrder: tree.ids.map(sessionAlias), sessionsByAlias, subagentDeepDives };
 }
 
 function metricsRows(captured, snapshot) {
@@ -649,6 +761,8 @@ function buildSessionExportInTransaction(db, requestedAlias) {
   const timelineFile = makeFile("timeline.json", { schemaVersion: BUNDLE_SCHEMA_VERSION, events: timeline });
   const metricsFile = makeFile("metrics.json", metrics);
   const transcriptFile = makeFile("transcript.json", transcript);
+  const chat = buildChat(captured, snapshot, tree, refs);
+  const chatFile = makeFile("chat.json", chat);
   const bounds = boundsForTimeline(timeline);
   const anomalies = coverageAnomalies(timeline, transcript);
   const manifest = {
@@ -687,11 +801,11 @@ function buildSessionExportInTransaction(db, requestedAlias) {
       timeline: "start/end time, tree ordinal, entity rank, identifier, raw-row SHA-256",
       trailingLf: true,
     },
-    files: [rawFiles["raw/sessions.json"], rawFiles["raw/messages.json"], rawFiles["raw/parts.json"], timelineFile, metricsFile, transcriptFile]
+    files: [rawFiles["raw/sessions.json"], rawFiles["raw/messages.json"], rawFiles["raw/parts.json"], timelineFile, metricsFile, transcriptFile, chatFile]
       .map(({ path, mediaType, bytes, sha256: digest }) => ({ path, mediaType, bytes, sha256: digest })),
   };
   const manifestFile = makeFile("manifest.json", manifest);
-  const files = [manifestFile, rawFiles["raw/sessions.json"], rawFiles["raw/messages.json"], rawFiles["raw/parts.json"], timelineFile, metricsFile, transcriptFile];
+  const files = [manifestFile, rawFiles["raw/sessions.json"], rawFiles["raw/messages.json"], rawFiles["raw/parts.json"], timelineFile, metricsFile, transcriptFile, chatFile];
   if (files.length !== EXPORT_FILES.length || files.some((file, index) => file.path !== EXPORT_FILES[index])) fail("bundle file coverage mismatch");
   return { bundleSchemaVersion: BUNDLE_SCHEMA_VERSION, filename: manifest.filename, files };
 }

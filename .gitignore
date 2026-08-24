@@ -18,6 +18,7 @@ coverage/
 dist/
 build/
 *.log
+.cortexkit/
 
 # Secrets and local configuration
 .env

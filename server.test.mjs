@@ -314,16 +314,20 @@ test("requires the exact export header and serves a read-only deterministic snap
   assert.equal(denied.response.statusCode, 403);
   assert.deepEqual(JSON.parse(denied.body), { error: "Export confirmation required" });
   const crossOrigin = await get(started.port, `/api/session-export?root=${alias}`, {
-    "X-OpenCode-Export": "session-contents-v1",
+    "X-OpenCode-Export": "session-contents-v2",
     origin: "http://localhost:9999",
   });
   assert.equal(crossOrigin.response.statusCode, 403);
-  const exported = await get(started.port, `/api/session-export?root=${alias}`, { "X-OpenCode-Export": "session-contents-v1" });
+  const exported = await get(started.port, `/api/session-export?root=${alias}`, { "X-OpenCode-Export": "session-contents-v2" });
   assert.equal(exported.response.statusCode, 200);
   assert.equal(exported.response.headers["cache-control"], "no-store");
   const model = JSON.parse(exported.body);
-  assert.equal(model.bundleSchemaVersion, 1);
-  assert.equal(model.files.length, 7);
+  assert.equal(model.bundleSchemaVersion, 2);
+  assert.equal(model.files.length, 8);
+  assert.deepEqual(model.files.map((file) => file.path), [
+    "manifest.json", "raw/sessions.json", "raw/messages.json", "raw/parts.json",
+    "timeline.json", "metrics.json", "transcript.json", "chat.json",
+  ]);
   assert.equal(JSON.parse(model.files[0].content).coverage.mode, "snapshot-only");
   assert.equal(writer.prepare("PRAGMA data_version").get().data_version, beforeVersion);
   assert.deepEqual(writer.prepare("SELECT sql FROM sqlite_master WHERE type='table' ORDER BY name").all(), beforeSchema);

@@ -1,4 +1,4 @@
-export const EXPORT_HEADER = "session-contents-v1";
+export const EXPORT_HEADER = "session-contents-v2";
 export const EXPORT_PATHS = Object.freeze([
   "manifest.json",
   "raw/sessions.json",
@@ -7,6 +7,7 @@ export const EXPORT_PATHS = Object.freeze([
   "timeline.json",
   "metrics.json",
   "transcript.json",
+  "chat.json",
 ]);
 
 const textEncoder = new TextEncoder();
@@ -42,7 +43,7 @@ function canonicalize(value) {
 }
 
 function canonicalJson(value) {
-  const encoded = JSON.stringify(canonicalize(value));
+  const encoded = JSON.stringify(canonicalize(value), null, 2);
   if (typeof encoded !== "string") fail();
   return `${encoded}\n`;
 }
@@ -61,6 +62,166 @@ function parseCanonicalJson(content) {
 
 function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizedKey(value) {
+  return String(value).replaceAll(/[^a-z0-9]/gi, "").toLowerCase();
+}
+
+function identifierColumn(columns, kind) {
+  const candidates = kind === "session"
+    ? ["id", "session_id", "sessionId"]
+    : kind === "message" ? ["id", "message_id", "messageId"] : ["id", "part_id", "partId"];
+  for (const candidate of candidates) {
+    const match = columns.find((column) => normalizedKey(column?.name) === normalizedKey(candidate));
+    if (match) return columns.indexOf(match);
+  }
+  return -1;
+}
+
+async function validateSemanticRefs(value, rawTables) {
+  const validateRawRef = async (ref, expectedKind = null) => {
+    if (!isObject(ref) || Object.keys(ref).some((key) => !["path", "row", "sha256"].includes(key))
+      || typeof ref.path !== "string" || !Number.isSafeInteger(ref.row) || ref.row < 0
+      || !/^[0-9a-f]{64}$/.test(String(ref.sha256))) fail();
+    const kind = Object.entries(rawTables).find(([, table]) => table.path === ref.path)?.[0];
+    const table = kind ? rawTables[kind] : null;
+    if (!table || (expectedKind && kind !== expectedKind) || ref.row >= table.rows.length) fail();
+    const row = table.rows[ref.row];
+    if (!Array.isArray(row) || await digest(textEncoder.encode(JSON.stringify(row))) !== ref.sha256) fail();
+    return { kind, row };
+  };
+  const rawIdentity = (ref, kind) => [kind, ref.path, ref.row, ref.sha256];
+  const sameRawIdentity = (left, right, kind) => {
+    const a = rawIdentity(left, kind);
+    const b = rawIdentity(right, kind);
+    return a.every((value, index) => value === b[index]);
+  };
+  const equalRef = (left, right, kind) => isObject(left) && isObject(right)
+    && left.kind === kind && right.kind === kind && left.id === right.id
+    && left.sessionAlias === right.sessionAlias
+    && sameRawIdentity(left.rawRef, right.rawRef, kind);
+  const validateSemanticRef = async (current, expectedKind) => {
+    if (!isObject(current) || !["session", "message", "part"].includes(current.kind)
+      || (expectedKind && current.kind !== expectedKind)
+      || typeof current.id !== "string" || !current.id
+      || Object.keys(current).some((key) => !["kind", "id", "sessionAlias", "rawRef"].includes(key))
+      || (Object.hasOwn(current, "sessionAlias") && (typeof current.sessionAlias !== "string" || !current.sessionAlias))) fail();
+    const { kind, row } = await validateRawRef(current.rawRef, current.kind);
+    const index = identifierColumn(rawTables[kind].columns, kind);
+    const identifier = index >= 0 ? row[index] : null;
+    if (!isObject(identifier) || identifier.type !== "text" || identifier.value !== current.id) fail();
+    return current;
+  };
+  const validateProjection = async (projection, kind, alias) => {
+    if (!isObject(projection) || typeof projection.id !== "string" || !projection.id
+      || !isObject(projection.rawRef) || !isObject(projection.ref)
+      || Object.keys(projection).some((key) => !["id", "rawRef", "ref", "type", "role", "tool", "segments", "anomalies", "sessionId", "messageId", "status", "toolCall", "parts"].includes(key))) fail();
+    await validateRawRef(projection.rawRef, kind);
+    await validateSemanticRef(projection.ref, kind);
+    if (projection.ref.id !== projection.id || projection.ref.sessionAlias !== alias
+      || !sameRawIdentity(projection.rawRef, projection.ref.rawRef, kind)) fail();
+    if (Array.isArray(projection.parts)) {
+      for (const part of projection.parts) await validateProjection(part, "part", alias);
+    }
+    if (projection.toolCall?.sources !== undefined) {
+      if (!isObject(projection.toolCall.sources)) fail();
+      for (const source of Object.values(projection.toolCall.sources)) {
+        if (!isObject(source) || !isObject(source.rawRef)) fail();
+        await validateRawRef(source.rawRef, kind === "part" ? "part" : "message");
+        if (!sameRawIdentity(source.rawRef, projection.rawRef, kind)) fail();
+      }
+    }
+  };
+  if (!isObject(value) || value.kind !== "opencode-visible-chat" || value.schemaVersion !== 1
+    || value.linkagePolicy !== "parent-session-only" || !isObject(value.sessionsByAlias)
+    || !Array.isArray(value.sessionOrder) || !isObject(value.rootSessionRef)
+    || Object.keys(value).some((key) => !["schemaVersion", "kind", "linkagePolicy", "rootSessionRef", "sessionOrder", "sessionsByAlias", "subagentDeepDives"].includes(key))) fail();
+  if (new Set(value.sessionOrder).size !== value.sessionOrder.length
+    || value.sessionOrder.some((alias) => typeof alias !== "string" || !isObject(value.sessionsByAlias[alias]))) fail();
+  await validateSemanticRef(value.rootSessionRef, "session");
+  const sessions = new Map();
+  for (const alias of value.sessionOrder) {
+    const session = value.sessionsByAlias[alias];
+    if (!isObject(session) || !isObject(session.sessionRef) || !Array.isArray(session.messages)
+      || !Array.isArray(session.unattachedParts) || !Array.isArray(session.childSessionRefs) || !isObject(session.deepDiveWindow)
+      || !Array.isArray(session.deepDiveWindow.messages) || !Array.isArray(session.deepDiveWindow.unattachedParts)
+      || Object.keys(session).some((key) => !["sessionRef", "parentSessionRef", "childSessionRefs", "messages", "unattachedParts", "deepDiveWindow"].includes(key))
+     || session.deepDiveWindow.messages.length !== session.messages.length
+     || session.deepDiveWindow.unattachedParts.length !== session.unattachedParts.length) fail();
+    await validateSemanticRef(session.sessionRef, "session");
+    if (session.sessionRef.sessionAlias !== alias || sessions.has(session.sessionRef.id)) fail();
+    sessions.set(session.sessionRef.id, { alias, session });
+    if (session.parentSessionRef !== null) {
+      if (!isObject(session.parentSessionRef)) fail();
+      await validateSemanticRef(session.parentSessionRef, "session");
+    }
+    for (const ref of session.childSessionRefs) await validateSemanticRef(ref, "session");
+    for (const message of session.messages) await validateProjection(message, "message", alias);
+    for (const part of session.unattachedParts) await validateProjection(part, "part", alias);
+    await validateSemanticRef(session.deepDiveWindow.sessionRef, "session");
+    if (!equalRef(session.deepDiveWindow.sessionRef, session.sessionRef, "session")) fail();
+    for (let index = 0; index < session.messages.length; index++) {
+      await validateSemanticRef(session.deepDiveWindow.messages[index], "message");
+      if (!equalRef(session.deepDiveWindow.messages[index], session.messages[index].ref, "message")) fail();
+    }
+    for (let index = 0; index < session.unattachedParts.length; index++) {
+      await validateSemanticRef(session.deepDiveWindow.unattachedParts[index], "part");
+      if (!equalRef(session.deepDiveWindow.unattachedParts[index], session.unattachedParts[index].ref, "part")) fail();
+    }
+  }
+  const root = sessions.get(value.rootSessionRef.id);
+  if (!root || !equalRef(root.session.sessionRef, value.rootSessionRef, "session") || root.session.parentSessionRef !== null) fail();
+  for (const { session } of sessions.values()) {
+    const parentId = session.parentSessionRef?.id ?? null;
+    const childIds = session.childSessionRefs.map((ref) => ref.id);
+    if (new Set(childIds).size !== childIds.length) fail();
+    for (const child of session.childSessionRefs) {
+      const target = sessions.get(child.id);
+      if (!target || !equalRef(target.session.sessionRef, child, "session")
+        || !target.session.parentSessionRef || !equalRef(target.session.parentSessionRef, session.sessionRef, "session")) fail();
+    }
+    if (parentId !== null) {
+      const parent = sessions.get(parentId);
+      if (!parent || !parent.session.childSessionRefs.some((ref) => equalRef(ref, session.sessionRef, "session"))) fail();
+    }
+  }
+  if (!Array.isArray(value.subagentDeepDives) || value.subagentDeepDives.length !== sessions.size - 1) fail();
+  const dives = new Set();
+  for (const dive of value.subagentDeepDives) {
+      if (!isObject(dive) || !isObject(dive.sessionRef) || !isObject(dive.parentSessionRef)
+        || dive.invocationRef !== null || !isObject(dive.window) || !Array.isArray(dive.assistantOutputRefs)
+        || !Array.isArray(dive.window.messages) || !Array.isArray(dive.window.unattachedParts)) fail();
+      await validateSemanticRef(dive.sessionRef, "session");
+      await validateSemanticRef(dive.parentSessionRef, "session");
+      await validateSemanticRef(dive.window.sessionRef, "session");
+      const target = sessions.get(dive.sessionRef.id);
+       if (!target || target.session.parentSessionRef === null || dives.has(dive.sessionRef.id)
+         || !equalRef(dive.sessionRef, target.session.sessionRef, "session")
+         || !equalRef(dive.parentSessionRef, target.session.parentSessionRef, "session")
+        || !equalRef(dive.window.sessionRef, target.session.sessionRef, "session")
+        || dive.window.messages.length !== target.session.messages.length
+        || dive.window.unattachedParts.length !== target.session.unattachedParts.length) fail();
+      dives.add(dive.sessionRef.id);
+      for (let index = 0; index < dive.window.messages.length; index++) {
+        const ref = dive.window.messages[index];
+        await validateSemanticRef(ref, "message");
+        if (!equalRef(ref, target.session.messages[index].ref, "message")) fail();
+      }
+      for (let index = 0; index < dive.window.unattachedParts.length; index++) {
+        const ref = dive.window.unattachedParts[index];
+        await validateSemanticRef(ref, "part");
+        if (!equalRef(ref, target.session.unattachedParts[index].ref, "part")) fail();
+      }
+      for (const ref of dive.assistantOutputRefs) await validateSemanticRef(ref);
+      const expectedOutputs = target.session.messages.filter((message) => message.role === "assistant").flatMap((message) => [
+        ...message.segments.map(() => message.ref),
+        ...message.parts.filter((part) => part.toolCall).map((part) => part.ref),
+      ]);
+      if (dive.assistantOutputRefs.length !== expectedOutputs.length
+        || dive.assistantOutputRefs.some((ref, index) => !equalRef(ref, expectedOutputs[index], ref.kind))) fail();
+    }
+  if (dives.size !== sessions.size - 1 || dives.has(value.rootSessionRef.id)) fail();
 }
 
 function aliasFromFilename(filename) {
@@ -92,7 +253,7 @@ function writeU32(view, offset, value) {
 }
 
 export async function validateSessionExport(bundle) {
-  if (!isObject(bundle) || bundle.bundleSchemaVersion !== 1 || !Array.isArray(bundle.files)) fail();
+  if (!isObject(bundle) || bundle.bundleSchemaVersion !== 2 || !Array.isArray(bundle.files)) fail();
   if (bundle.files.length !== EXPORT_PATHS.length) fail();
   const filenameAlias = aliasFromFilename(bundle.filename);
   if (!filenameAlias || bundle.filename !== `opencode-session-contents-${filenameAlias}.zip`) fail();
@@ -110,13 +271,13 @@ export async function validateSessionExport(bundle) {
   if (EXPORT_PATHS.some((path) => !byPath.has(path))) fail();
   const manifestBytes = byPath.get("manifest.json").bytes;
   const manifest = parseCanonicalJson(new TextDecoder().decode(manifestBytes));
-  if (!isObject(manifest) || manifest.bundleSchemaVersion !== 1 || manifest.kind !== "opencode-session-contents") fail();
+  if (!isObject(manifest) || manifest.bundleSchemaVersion !== 2 || manifest.kind !== "opencode-session-contents") fail();
   if (manifest.filename !== bundle.filename || manifest.coverage?.mode !== "snapshot-only") fail();
   if (manifest.coverage?.runtimeSnapshot?.included !== true
     || manifest.coverage?.runtimeSnapshot?.consistency !== "single-sqlite-read-transaction"
     || manifest.coverage?.liveTelemetry?.included !== false
     || manifest.coverage?.liveTelemetry?.reason !== "not-connected") fail();
-  if (!Array.isArray(manifest.files) || manifest.files.length !== 6) fail();
+  if (!Array.isArray(manifest.files) || manifest.files.length !== 7) fail();
   const manifestPaths = new Set();
   const expectedManifestPaths = new Set(EXPORT_PATHS.slice(1));
   for (const declared of manifest.files) {
@@ -127,6 +288,14 @@ export async function validateSessionExport(bundle) {
   }
   if (manifestPaths.size !== expectedManifestPaths.size || [...expectedManifestPaths].some((path) => !manifestPaths.has(path))) fail();
   if (manifest.selected?.alias !== filenameAlias) fail();
+  const rawTables = {};
+  for (const [kind, path] of [["session", "raw/sessions.json"], ["message", "raw/messages.json"], ["part", "raw/parts.json"]]) {
+    const table = parseCanonicalJson(new TextDecoder().decode(byPath.get(path).bytes));
+    if (!isObject(table) || !Array.isArray(table.columns) || !Array.isArray(table.rows)) fail();
+    rawTables[kind] = { ...table, path };
+  }
+  const chat = parseCanonicalJson(new TextDecoder().decode(byPath.get("chat.json").bytes));
+  await validateSemanticRefs(chat, rawTables);
   return { bundle, manifest, files: [...byPath.values()] };
 }
 

@@ -143,14 +143,36 @@ async function sessionExportBundle() {
     const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(content)));
     return [...bytes].map((value) => value.toString(16).padStart(2, "0")).join("");
   };
-  const paths = ["raw/sessions.json", "raw/messages.json", "raw/parts.json", "timeline.json", "metrics.json", "transcript.json"];
+  const paths = ["raw/sessions.json", "raw/messages.json", "raw/parts.json", "timeline.json", "metrics.json", "transcript.json", "chat.json"];
   const files = [];
   for (const path of paths) {
-    const content = `${JSON.stringify({ path })}\n`;
+    const kind = path.includes("sessions") ? "session" : path.includes("messages") ? "message" : path.includes("parts") ? "part" : null;
+    const contentValue = kind
+      ? { columns: [{ name: "id" }], rows: [[{ type: "text", value: kind === "session" ? "root" : kind }]] }
+      : { kind: "opencode-visible-chat" };
+    const content = `${JSON.stringify(canonical(contentValue), null, 2)}\n`;
     files.push({ path, mediaType: "application/json; charset=utf-8", bytes: encoder.encode(content).byteLength, sha256: await digest(content), content });
   }
+  const sessions = JSON.parse(files[0].content);
+  const messages = JSON.parse(files[1].content);
+  const parts = JSON.parse(files[2].content);
+  const ref = (kind, id, path, row) => ({ kind, id, sessionAlias: "0123456789abcdef", rawRef: { path, row, sha256: "pending" } });
+  const sessionRef = ref("session", "root", "raw/sessions.json", 0);
+  const messageRef = ref("message", "message", "raw/messages.json", 0);
+  const partRef = ref("part", "part", "raw/parts.json", 0);
+  sessionRef.rawRef.sha256 = await digest(JSON.stringify(sessions.rows[0]));
+  messageRef.rawRef.sha256 = await digest(JSON.stringify(messages.rows[0]));
+  partRef.rawRef.sha256 = await digest(JSON.stringify(parts.rows[0]));
+  const message = { id: "message", rawRef: messageRef.rawRef, ref: messageRef, parts: [{ id: "part", rawRef: partRef.rawRef, ref: partRef, parts: [] }] };
+  const chat = { schemaVersion: 1, kind: "opencode-visible-chat", linkagePolicy: "parent-session-only", rootSessionRef: sessionRef,
+    sessionOrder: ["0123456789abcdef"], sessionsByAlias: { "0123456789abcdef": {
+      sessionRef, parentSessionRef: null, childSessionRefs: [], messages: [message], unattachedParts: [],
+      deepDiveWindow: { kind: "whole-session", sessionRef, messages: [messageRef], unattachedParts: [] },
+    } }, subagentDeepDives: [] };
+  const chatContent = `${JSON.stringify(canonical(chat), null, 2)}\n`;
+  files[6] = { path: "chat.json", mediaType: "application/json; charset=utf-8", bytes: encoder.encode(chatContent).byteLength, sha256: await digest(chatContent), content: chatContent };
   const manifest = canonical({
-    bundleSchemaVersion: 1,
+    bundleSchemaVersion: 2,
     kind: "opencode-session-contents",
     filename: "opencode-session-contents-0123456789abcdef.zip",
     selected: { alias: "0123456789abcdef" },
@@ -161,9 +183,9 @@ async function sessionExportBundle() {
     },
     files: files.map(({ path, mediaType, bytes, sha256 }) => ({ path, mediaType, bytes, sha256 })),
   });
-  const content = `${JSON.stringify(manifest)}\n`;
+  const content = `${JSON.stringify(manifest, null, 2)}\n`;
   return {
-    bundleSchemaVersion: 1,
+    bundleSchemaVersion: 2,
     filename: manifest.filename,
     files: [{ path: "manifest.json", mediaType: "application/json; charset=utf-8", bytes: encoder.encode(content).byteLength, sha256: await digest(content), content }, ...files],
   };
@@ -497,7 +519,7 @@ test("session export requires confirmation and reports a local download", async 
     await button.listeners.get("click")();
     assert.equal(calls.filter(({ url }) => String(url).startsWith("/api/session-export")).length, 1);
     const exportCall = calls.find(({ url }) => String(url).startsWith("/api/session-export"));
-    assert.equal(exportCall.options.headers["X-OpenCode-Export"], "session-contents-v1");
+    assert.equal(exportCall.options.headers["X-OpenCode-Export"], "session-contents-v2");
     assert.equal(documentRef.elements.get("sessionExportStatus").textContent, "Session archive downloaded.");
     assert.equal(revoked, "blob:session-export");
     exportFailure = true;

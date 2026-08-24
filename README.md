@@ -49,6 +49,13 @@ existing aggregate downloads do not include it. Archives are generated in the
 browser with deterministic JSON and an uncompressed ZIP; users are responsible
 for deleting any downloaded copies.
 
+Session archives use the structured `session-contents-v2` format. The response contains
+eight canonical UTF-8 JSON files: `manifest.json`, the three typed raw-table snapshots,
+`timeline.json`, `metrics.json`, `transcript.json`, and `chat.json`. The manifest records
+the selected root tree, snapshot consistency, file sizes, and SHA-256 digests. `chat.json`
+contains ordered session messages, unattached parts, and semantic references back to the
+verified raw rows; missing tool metadata is omitted rather than inferred.
+
 Navigation and time-range controls are keyboard accessible and remain usable at
 narrow widths; changing a filter keeps the latest request authoritative. The
 configured-inventory opt-in is withdrawn from the visible view immediately,

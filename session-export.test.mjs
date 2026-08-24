@@ -70,7 +70,7 @@ test("builds a deterministic, raw-fidelity snapshot without changing SQLite", ()
     const second = buildSessionExport(db, alias);
     assert.deepEqual(first, second);
     assert.deepEqual(first.files.map((file) => file.path), [
-      "manifest.json", "raw/sessions.json", "raw/messages.json", "raw/parts.json", "timeline.json", "metrics.json", "transcript.json",
+      "manifest.json", "raw/sessions.json", "raw/messages.json", "raw/parts.json", "timeline.json", "metrics.json", "transcript.json", "chat.json",
     ]);
     const rawSessions = JSON.parse(first.files[1].content);
     assert.equal(rawSessions.rows.length, 3);
@@ -88,6 +88,12 @@ test("builds a deterministic, raw-fidelity snapshot without changing SQLite", ()
     const transcript = JSON.parse(first.files[6].content);
     assert.equal(transcript.messages.length, 2);
     assert.equal(transcript.unattachedParts.length, 1);
+    const chat = JSON.parse(first.files[7].content);
+    assert.deepEqual(chat.sessionOrder, [sessionAlias("root"), sessionAlias("child"), sessionAlias("grandchild")]);
+    assert.equal(chat.sessionsByAlias[sessionAlias("root")].messages[0].segments[0].text, "Keep exact");
+    assert.equal(chat.sessionsByAlias[sessionAlias("root")].messages[0].parts[0].toolCall.name, "read");
+    assert.deepEqual(chat.sessionsByAlias[sessionAlias("grandchild")].deepDiveWindow.unattachedParts.map((ref) => ref.id), ["unattached-part"]);
+    assert.equal(chat.subagentDeepDives[0].invocationRef, null);
   } finally {
     db.close();
   }
@@ -98,6 +104,23 @@ test("builds a deterministic, raw-fidelity snapshot without changing SQLite", ()
     assert.deepEqual(after.prepare("SELECT * FROM session ORDER BY id").all(), beforeRows);
   } finally {
     after.close();
+    rmSync(created.directory, { recursive: true, force: true });
+  }
+});
+
+test("omits tool names and sources when no persisted tool metadata exists", () => {
+  const created = fixture();
+  const writer = new DatabaseSync(created.path);
+  writer.prepare("UPDATE part SET data = ? WHERE id = 'root-part'").run(JSON.stringify({ type: "tool", state: { status: "completed" } }));
+  writer.close();
+  const db = new DatabaseSync(created.path, { readOnly: true });
+  try {
+    const chat = JSON.parse(buildSessionExport(db, sessionAlias("root")).files.find((file) => file.path === "chat.json").content);
+    const toolCall = chat.sessionsByAlias[sessionAlias("root")].messages[0].parts[0].toolCall;
+    assert.equal(Object.hasOwn(toolCall, "name"), false);
+    assert.equal(Object.hasOwn(toolCall.sources, "name"), false);
+  } finally {
+    db.close();
     rmSync(created.directory, { recursive: true, force: true });
   }
 });
@@ -119,7 +142,7 @@ test("preserves SQLite big integers and records unsupported content without inve
     const manifest = JSON.parse(exported.files[0].content);
     assert.ok(manifest.anomalies.includes("data-invalid-utf8"));
     assert.ok(manifest.anomalies.includes("time-missing"));
-    const transcript = JSON.parse(exported.files.at(-1).content);
+    const transcript = JSON.parse(exported.files.find((file) => file.path === "transcript.json").content);
     const unsupported = transcript.unattachedParts.find((part) => part.id === "unattached-part");
     assert.deepEqual(unsupported.segments, []);
     assert.ok(unsupported.anomalies.includes("data-invalid-utf8"));
@@ -130,7 +153,7 @@ test("preserves SQLite big integers and records unsupported content without inve
 });
 
 test("canonical JSON has sorted keys and one trailing LF", () => {
-  assert.equal(canonicalJson({ z: 1, a: { y: true, x: null } }), '{"a":{"x":null,"y":true},"z":1}\n');
+  assert.equal(canonicalJson({ z: 1, a: { y: true, x: null } }), '{\n  "a": {\n    "x": null,\n    "y": true\n  },\n  "z": 1\n}\n');
 });
 
 test("rejects child selection and unknown aliases without falling back to all sessions", () => {
@@ -281,7 +304,7 @@ test("keeps multiple task children and unknown causality explicit", () => {
   const db = new DatabaseSync(created.path, { readOnly: true });
   try {
     const exported = buildSessionExport(db, sessionAlias("root"));
-    const transcript = JSON.parse(exported.files.at(-1).content);
+    const transcript = JSON.parse(exported.files.find((file) => file.path === "transcript.json").content);
     const task = transcript.messages.find((message) => message.id === "task-message");
     assert.deepEqual(task.parts.map((part) => part.id), ["task-child-a", "task-child-b", "task-parent"]);
     assert.equal(transcript.unattachedParts.find((part) => part.id === "task-unknown").messageId, "missing-task-message");
